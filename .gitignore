@@ -1,0 +1,14 @@
+venv/*
+.env
+test.session
+test.session-journal
+*session.session*
+session.session-journal
+downloads/
+.env.bak
+.idea/
+.thumb_cache
+channels.json
+default_session.bkp
+download_state.json
+download_state.json.bak
