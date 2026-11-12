@@ -1,18 +1,20 @@
-"""Viewer package — creates the Flask app, with optional HTTP Basic Auth."""
+"""Web package — creates the Flask app (home, downloader, viewer), with optional HTTP Basic Auth."""
 import os
 import secrets
 
 from flask import Flask, Response, request
 
 from viewer.routes import bp
+from viewer.download_routes import bp as download_bp
 
 
-def create_app() -> Flask:
+def create_app(telegram) -> Flask:
     app = Flask(
         __name__,
         template_folder="templates",
         static_folder="static",
     )
+    app.extensions["telegram"] = telegram
 
     # ─── HTTP Basic Auth ─────────────────────────────────────────
     # Set VIEWER_USER / VIEWER_PASS in .env to enable.
@@ -45,4 +47,5 @@ def create_app() -> Flask:
         )
 
     app.register_blueprint(bp)
+    app.register_blueprint(download_bp)
     return app

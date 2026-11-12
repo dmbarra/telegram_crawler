@@ -14,6 +14,6 @@
   data-current-sort="{{ current_sort or 'newest' }}"
 >
 {% block body %}{% endblock %}
-<script src="{{ url_for('static', filename='viewer.js') }}"></script>
+{% block scripts %}{% endblock %}
 </body>
 </html>

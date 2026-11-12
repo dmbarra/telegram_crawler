@@ -3,6 +3,7 @@
 
 {% block body %}
 <header>
+  <a href="/" class="btn">← Home</a>
   <h1>🎬 Media Viewer</h1>
   <form method="get">
     <select name="channel" onchange="this.form.submit()">
@@ -35,7 +36,7 @@
   {% if not data %}
     <div class="empty">
       {% if total_matching == 0 and not query and not current_type and not current_channel %}
-        No media found in <code>downloads/</code>. Run <code>python main.py</code> first.
+        No media found in <code>downloads/</code>. Use <a href="/download">Download</a> first.
       {% else %}
         No files match your filters.
       {% endif %}
@@ -95,4 +96,8 @@
   <div class="media" id="lb-media"></div>
   <div class="info" id="lb-info"></div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='viewer.js') }}"></script>
 {% endblock %}

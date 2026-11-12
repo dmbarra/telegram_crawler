@@ -18,8 +18,8 @@ def _normalize_sort(raw: str) -> str:
     return raw if raw in SORT_OPTIONS else DEFAULT_SORT
 
 
-# ─── GET / ──────────────────────────────────────────────────────
-@bp.route("/")
+# ─── GET /viewer ────────────────────────────────────────────────
+@bp.route("/viewer")
 def index():
     force = request.args.get("refresh") == "1"
     channel = request.args.get("channel", "")

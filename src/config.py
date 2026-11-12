@@ -1,7 +1,7 @@
 """Loads credentials & paths. Never destroys your .env.
 
 Important: PROJECT_ROOT is the parent of src/ so .env, downloads/,
-download_state.json, channels.json all live at the top level.
+download_state.json, channels.txt all live at the top level.
 """
 import os
 from pathlib import Path
@@ -15,7 +15,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 ENV_PATH = PROJECT_ROOT / ".env"
 STATE_PATH = PROJECT_ROOT / "download_state.json"
-CHANNELS_JSON_PATH = PROJECT_ROOT / "channels.json"
 DOWNLOADS_DIR = PROJECT_ROOT / "downloads"
 CHANNELS_TXT_PATH = PROJECT_ROOT / "channels.txt"
 
@@ -26,9 +25,7 @@ if not ENV_PATH.exists():
         "API_HASH=your_api_hash\n"
         "SESSION_NAME=default_session\n"
         "BATCH_SIZE=5\n"
-        "MAX_MESSAGES=1000\n"
-        "CHANNELS_SKIP=\n"
-        "EXTRA_CHANNELS=\n",
+        "MAX_MESSAGES=1000\n",
         encoding="utf-8",
     )
 
@@ -37,29 +34,17 @@ load_dotenv(ENV_PATH)
 API_ID = int(os.getenv("API_ID", "0") or 0)
 API_HASH = os.getenv("API_HASH", "") or ""
 SESSION_NAME = os.getenv("SESSION_NAME", "default_session")
+# Defaults for the Download page options
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5"))
 MAX_MESSAGES = int(os.getenv("MAX_MESSAGES", "1000"))
 
-# CHANNELS_SKIP="-100123,-100456" → {-100123, -100456}
-CHANNELS_SKIP = {
-    int(x.strip())
-    for x in (os.getenv("CHANNELS_SKIP", "") or "").split(",")
-    if x.strip().lstrip("-").isdigit()
-}
-
-# EXTRA_CHANNELS: comma-separated @username / -100123 / https://t.me/foo
+# Read-only extras from .env: comma-separated @username / -100123 / https://t.me/foo.
+# Channels added in the web page go to channels.txt instead (see src/storage.py).
 EXTRA_CHANNELS = [
     x.strip()
     for x in (os.getenv("EXTRA_CHANNELS", "") or "").split(",")
     if x.strip()
 ]
-
-# Also append entries from channels.txt (if present) — one per line, # for comments
-if CHANNELS_TXT_PATH.exists():
-    for line in CHANNELS_TXT_PATH.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            EXTRA_CHANNELS.append(line)
 
 
 def validate() -> bool:

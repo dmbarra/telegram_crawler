@@ -1,14 +1,16 @@
-"""Orchestration: fetch channels, single-channel run, all-channels run.
+"""Orchestration: fetch channels, run a download job over a list of channels.
 
 Channels are returned as normalized dicts:
     {id, title, entity, username, is_channel, is_group}
 
 fetch_channels() uses GetDialogsRequest(hash=0) to BYPASS Telethon's
 dialog cache — this is what fixes "menu shows fewer channels than app".
-Includes: main folder + archived folder + EXTRA_CHANNELS, minus CHANNELS_SKIP.
+Includes: main folder + archived folder + extra channels (channels.txt + .env).
+Extra channels carry `extra` (the identifier) and `extra_source` ("file" | "env").
+
+All messages go to a `log(msg, level)` callable; levels: info, ok, warn, error.
 """
 import asyncio
-from colorama import Fore
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import (
     InputPeerEmpty,
@@ -17,12 +19,10 @@ from telethon.tl.types import (
     InputMessagesFilterDocument,
     InputMessagesFilterPhotoVideo,
 )
-from src.config import (
-    MAX_MESSAGES, BATCH_SIZE, CHANNELS_SKIP, EXTRA_CHANNELS,
-)
+from src.config import EXTRA_CHANNELS
+from src.storage import load_extra_channels
 from src.utils import safe_filename
 from src.downloader import download_in_batches
-from src.storage import save_state
 
 
 # ─── media choice → (filter factory, folder name, mime filter) ───
@@ -32,6 +32,14 @@ FILTER_MAP = {
     "3": (InputMessagesFilterDocument,  "pdfs",      "application/pdf"),
     "4": (InputMessagesFilterDocument,  "zips",      "application/zip"),
     "5": (None,                         "all_media", None),
+}
+
+MEDIA_LABELS = {
+    "1": "Videos only",
+    "2": "Images only",
+    "3": "PDFs only",
+    "4": "ZIP files only",
+    "5": "All media types",
 }
 
 
@@ -57,10 +65,13 @@ def _normalize_chat(chat):
         "username": getattr(chat, "username", None),
         "is_channel": is_channel or is_megagroup,
         "is_group": is_group,
+        "member": True,
+        "extra": None,
+        "extra_source": None,
     }
 
 
-def _normalize_entity(entity):
+def normalize_entity(entity, ident, source):
     is_channel = bool(
         getattr(entity, "broadcast", False) or
         (getattr(entity, "megagroup", False) is False
@@ -73,15 +84,21 @@ def _normalize_entity(entity):
         "username": getattr(entity, "username", None),
         "is_channel": is_channel,
         "is_group": not is_channel,
+        "member": False,
+        "extra": ident,
+        "extra_source": source,
     }
 
 
 # ─── fetch: server-side full list (bypasses cache) ─────────────
-async def fetch_channels(client):
+async def fetch_channels(client, log):
     """Fetch ALL channels/groups fresh from the server using hash=0.
 
     hash=0 tells Telegram: "pretend I have nothing cached, send the full list".
     This is the fix for "menu shows fewer channels than Telegram app".
+
+    Returns (channels, failed) — failed = extras that could not be resolved:
+    [{ident, source, error}].
     """
     # ── Fetch main (folder_id=0) ──
     try:
@@ -93,8 +110,8 @@ async def fetch_channels(client):
             folder_id=0,
         ))
     except Exception as e:
-        print(f"{Fore.RED}✗ Failed to fetch main dialogs: {e}{Fore.RESET}")
-        return []
+        log(f"✗ Failed to fetch main dialogs: {e}", "error")
+        return [], []
 
     # ── Fetch archived (folder_id=1) — merge, ignore errors ──
     archived_chats = []
@@ -121,50 +138,34 @@ async def fetch_channels(client):
         seen_ids.add(chat.id)
         all_chats.append(chat)
 
-    # ── Apply skip + normalize ──
-    normalized = []
-    excluded = 0
-    for chat in all_chats:
-        if chat.id in CHANNELS_SKIP:
-            excluded += 1
-            continue
-        normalized.append(_normalize_chat(chat))
+    normalized = [_normalize_chat(chat) for chat in all_chats]
 
-    # ── Merge EXTRA_CHANNELS ──
-    added = 0
-    current_ids = {c["id"] for c in normalized}
-    for ident in EXTRA_CHANNELS:
+    # ── Merge extra channels ──
+    by_id = {c["id"]: c for c in normalized}
+    failed = []
+    extras = ([(i, "file") for i in load_extra_channels()]
+              + [(i, "env") for i in EXTRA_CHANNELS])
+    for ident, source in extras:
         try:
             entity = await client.get_entity(ident)
         except Exception as e:
-            print(f"{Fore.YELLOW}⚠ Could not resolve '{ident}': {e}{Fore.RESET}")
+            log(f"⚠ Could not resolve '{ident}': {e}", "warn")
+            failed.append({"ident": ident, "source": source, "error": str(e)})
             continue
-        if entity.id in current_ids or entity.id in CHANNELS_SKIP:
+        if entity.id in by_id:
+            # Already a member: just remember it is listed as extra, so it can be removed.
+            if not by_id[entity.id]["extra"]:
+                by_id[entity.id].update(extra=ident, extra_source=source)
             continue
-        normalized.append(_normalize_entity(entity))
-        current_ids.add(entity.id)
-        added += 1
+        by_id[entity.id] = normalize_entity(entity, ident, source)
+        normalized.append(by_id[entity.id])
 
-    archived_count = sum(1 for c in archived_chats
-                        if hasattr(c, "title") and c.id not in CHANNELS_SKIP)
-    print(f"{Fore.GREEN}✓ Fetched {len(normalized)} channels/groups fresh from server"
-          f"{' (includes ' + str(archived_count) + ' archived)' if archived_count else ''}"
-          f"{Fore.RESET}")
-    if excluded:
-        print(f"{Fore.YELLOW}Excluded {excluded} channel(s) via CHANNELS_SKIP{Fore.RESET}")
-    if added:
-        print(f"{Fore.GREEN}+ Added {added} channel(s) via EXTRA_CHANNELS{Fore.RESET}")
+    archived_count = sum(1 for c in archived_chats if hasattr(c, "title"))
+    log(f"✓ Fetched {len(normalized)} channels/groups fresh from server"
+        f"{' (includes ' + str(archived_count) + ' archived)' if archived_count else ''}",
+        "ok")
 
-    return normalized
-
-
-def print_channels(channels) -> None:
-    print(f"\n{Fore.CYAN}Your Channels / Groups:{Fore.RESET}")
-    for i, c in enumerate(channels, 1):
-        uname = f"@{c['username']}" if c["username"] else "(private)"
-        kind = "channel" if c["is_channel"] else "group"
-        title = (c["title"] or "Untitled")[:35]
-        print(f"  {i:3}. [{kind:7}] {title:35}  {uname:20}  (ID: {c['id']})")
+    return normalized, failed
 
 
 # ─── internal helpers ───────────────────────────────────────────
@@ -178,126 +179,77 @@ async def _probe_has_media(client, entity, filter_type, mime) -> bool:
         return False
 
 
-async def _fetch_all_media(client, entity, limit):
+async def _fetch_all_media(client, entity, limit, log):
     seen, combined = set(), []
 
-    print(f"    {Fore.YELLOW}→ fetching photos + videos...{Fore.RESET}")
     pv = await client.get_messages(entity, filter=InputMessagesFilterPhotoVideo(), limit=limit)
     for m in pv:
         if m.id not in seen:
             seen.add(m.id)
             combined.append(m)
-    print(f"    {Fore.YELLOW}→ {len(pv)} photos/videos{Fore.RESET}")
+    log(f"  → {len(pv)} photos/videos")
 
-    print(f"    {Fore.YELLOW}→ fetching documents...{Fore.RESET}")
     docs = await client.get_messages(entity, filter=InputMessagesFilterDocument(), limit=limit)
     for m in docs:
         if m.id not in seen:
             seen.add(m.id)
             combined.append(m)
-    print(f"    {Fore.YELLOW}→ {len(docs)} documents{Fore.RESET}")
+    log(f"  → {len(docs)} documents")
 
     combined.sort(key=lambda m: m.id, reverse=True)
     return combined
 
 
-async def _fetch_messages(client, entity, filter_type, mime):
-    limit = MAX_MESSAGES if MAX_MESSAGES > 0 else None
+async def _fetch_messages(client, entity, filter_type, mime, max_messages, log):
+    limit = max_messages if max_messages > 0 else None
     if filter_type is None and mime is None:
-        return await _fetch_all_media(client, entity, limit)
+        return await _fetch_all_media(client, entity, limit, log)
     msgs = await client.get_messages(entity, filter=filter_type, limit=limit)
     if mime:
         msgs = [m for m in msgs if m.document and m.document.mime_type == mime]
     return msgs
 
 
-# ─── run: single channel ────────────────────────────────────────
-async def run_single(client, channels, filter_type, folder_name, mime, state):
-    try:
-        idx = int(input(f"\n{Fore.CYAN}Enter channel number: {Fore.RESET}")) - 1
-        if not (0 <= idx < len(channels)):
-            raise ValueError
-    except ValueError:
-        print(f"{Fore.RED}Invalid number.{Fore.RESET}")
-        return
-
-    selected = channels[idx]
-    ch_folder = safe_filename(selected["title"] or f"channel_{selected['id']}")
-    full_folder = f"{ch_folder}/{folder_name}"
-
-    print(f"{Fore.YELLOW}Fetching messages from {selected['title']}...{Fore.RESET}")
-    try:
-        msgs = await asyncio.wait_for(
-            _fetch_messages(client, selected["entity"], filter_type, mime), timeout=180
-        )
-    except asyncio.TimeoutError:
-        print(f"{Fore.RED}✗ fetch timed out after 180s{Fore.RESET}")
-        return
-    print(f"{Fore.GREEN}Found {len(msgs)} matching messages.{Fore.RESET}")
-
-    if not msgs:
-        print(f"{Fore.RED}No media found.{Fore.RESET}")
-        return
-
-    d, s, e = await download_in_batches(msgs, full_folder, BATCH_SIZE, state, selected["title"])
-    print(f"\n{Fore.GREEN}Done. {d} downloaded, {s} skipped, {e} errors.{Fore.RESET}")
-
-
-# ─── run: all channels ──────────────────────────────────────────
-async def run_all(client, channels, filter_type, folder_name, mime, state):
-    tot_d = tot_s = tot_e = proc = 0
-    print(f"\n{Fore.YELLOW}Scanning {len(channels)} channels for {folder_name}...{Fore.RESET}\n")
-
+# ─── run: one or more channels ──────────────────────────────────
+async def run_job(client, channels, filter_type, folder_name, mime,
+                  batch_size, max_messages, state, progress):
+    log = progress.log
     for i, ch in enumerate(channels, 1):
         title = ch["title"]
-        print(f"{Fore.CYAN}[{i}/{len(channels)}] {title}{Fore.RESET}")
-
-        entity = ch["entity"]   # ← use entity directly, no re-fetch needed
-        if entity is None:
-            print(f"  {Fore.RED}✗ No entity for channel{Fore.RESET}")
-            continue
+        entity = ch["entity"]
+        progress.channel_start(i, title)
+        log(f"[{i}/{len(channels)}] {title}")
 
         try:
             ok = await asyncio.wait_for(
                 _probe_has_media(client, entity, filter_type, mime), timeout=30
             )
         except asyncio.TimeoutError:
-            print(f"  {Fore.RED}✗ probe timed out{Fore.RESET}")
+            log("  ✗ probe timed out", "error")
             continue
         if not ok:
-            print(f"  {Fore.YELLOW}○ No {folder_name}, skipping{Fore.RESET}")
+            log(f"  ○ No {folder_name}, skipping", "warn")
             continue
 
         try:
             msgs = await asyncio.wait_for(
-                _fetch_messages(client, entity, filter_type, mime), timeout=180
+                _fetch_messages(client, entity, filter_type, mime, max_messages, log),
+                timeout=180
             )
         except asyncio.TimeoutError:
-            print(f"  {Fore.RED}✗ fetch timed out after 180s — skipping{Fore.RESET}")
+            log("  ✗ fetch timed out after 180s — skipping", "error")
             continue
         except Exception as e:
-            print(f"  {Fore.RED}✗ Fetch failed: {e}{Fore.RESET}")
+            log(f"  ✗ Fetch failed: {e}", "error")
             continue
 
         if not msgs:
-            print(f"  {Fore.YELLOW}○ No matching media, skipping{Fore.RESET}")
+            log("  ○ No matching media, skipping", "warn")
             continue
 
-        proc += 1
         ch_folder = safe_filename(title or f"channel_{ch['id']}")
-        full_folder = f"{ch_folder}/{folder_name}"
-        print(f"  {Fore.GREEN}→ downloading {len(msgs)} items{Fore.RESET}")
-
-        d, s, e = await download_in_batches(msgs, full_folder, BATCH_SIZE, state, title)
-        tot_d += d; tot_s += s; tot_e += e
-        print(f"  Downloaded: {Fore.GREEN}{d}{Fore.RESET} | "
-              f"Skipped: {Fore.YELLOW}{s}{Fore.RESET} | "
-              f"Errors: {Fore.RED}{e}{Fore.RESET}\n")
-        save_state(state)
-
-    print(f"\n{Fore.GREEN}═══ SUMMARY ═══{Fore.RESET}")
-    print(f"  Channels scanned   : {len(channels)}")
-    print(f"  Channels with media: {proc}")
-    print(f"  New downloads      : {Fore.GREEN}{tot_d}{Fore.RESET}")
-    print(f"  Duplicates skipped : {Fore.YELLOW}{tot_s}{Fore.RESET}")
-    print(f"  Errors             : {Fore.RED}{tot_e}{Fore.RESET}")
+        log(f"  → downloading {len(msgs)} items")
+        d, s, e = await download_in_batches(
+            msgs, f"{ch_folder}/{folder_name}", batch_size, state, title, progress
+        )
+        log(f"  Downloaded {d} | Skipped {s} | Errors {e}", "ok")

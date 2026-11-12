@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Telegram Crawler{% endblock %}
+
+{% block body %}
+<header>
+  <h1>Telegram Crawler</h1>
+  <div class="stats" id="tg-status">Telegram: …</div>
+</header>
+
+<main class="home">
+  <a class="card" href="/viewer">
+    <h2>Viewer</h2>
+    <p>Browse the media you downloaded.</p>
+  </a>
+  <a class="card" href="/download">
+    <h2>Download</h2>
+    <p id="job-summary">Get new media from your Telegram channels.</p>
+  </a>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function refresh() {
+  try {
+    const s = await (await fetch("/api/tg/status?since=999999999")).json();
+    const t = s.telegram;
+    document.getElementById("tg-status").textContent =
+      t.status === "ready" ? `Telegram: connected as ${t.account}` :
+      t.status === "error" ? `Telegram: error — ${t.error}` : "Telegram: connecting…";
+    const j = s.job;
+    if (j.running) {
+      document.getElementById("job-summary").textContent =
+        `Running: channel ${j.channel_index}/${j.channel_count} · ${j.downloaded} downloaded`;
+    }
+  } catch (_) { /* server restarting */ }
+  setTimeout(refresh, 2000);
+}
+refresh();
+</script>
+{% endblock %}

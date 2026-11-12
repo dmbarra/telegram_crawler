@@ -1,6 +1,5 @@
 telethon
 python-dotenv
 colorama
-tqdm
 flask
 waitress
