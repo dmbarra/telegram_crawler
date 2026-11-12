@@ -1,4 +1,4 @@
-"""Pure helpers — no I/O, no globals."""
+"""Small helpers — no globals."""
 import os
 import re
 import mimetypes
@@ -80,8 +80,10 @@ def get_media_key(message):
 
 
 def resolve_unique_path(directory: Path, filename: str) -> Path:
-    """Return a non-colliding path inside directory.
+    """Return a non-colliding path inside directory, reserved as an empty file.
 
+    Reserving matters because a batch downloads in parallel: two files with
+    the same caption would otherwise both get the same free name.
     Also re-truncates on collision so `_1`, `_2` suffixes never push the
     filename past the OS limit.
     """
@@ -89,10 +91,14 @@ def resolve_unique_path(directory: Path, filename: str) -> Path:
     stem, ext = os.path.splitext(filename)
     candidate = filename
     counter = 1
-    while (directory / candidate).exists():
-        # Keep the stem within limits even after adding "_N"
-        suffix = f"_{counter}"
-        trimmed = stem[: _MAX_STEM_LEN - len(suffix)]
-        candidate = f"{trimmed}{suffix}{ext}"
-        counter += 1
-    return directory / candidate
+    while True:
+        path = directory / candidate
+        try:
+            path.touch(exist_ok=False)
+            return path
+        except FileExistsError:
+            # Keep the stem within limits even after adding "_N"
+            suffix = f"_{counter}"
+            trimmed = stem[: _MAX_STEM_LEN - len(suffix)]
+            candidate = f"{trimmed}{suffix}{ext}"
+            counter += 1

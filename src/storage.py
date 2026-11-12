@@ -1,9 +1,7 @@
-"""Persistent state + SAFE .env / channels.json writing."""
+"""Persistent state (dedup) + the channels.txt list of extra channels."""
 import os
 import json
-import base64
-from colorama import Fore
-from src.config import ENV_PATH, STATE_PATH, CHANNELS_JSON_PATH
+from src.config import STATE_PATH, CHANNELS_TXT_PATH
 
 
 # ─── dedup state ────────────────────────────────────────────────
@@ -24,76 +22,33 @@ def save_state(state: dict) -> None:
     os.replace(tmp, STATE_PATH)
 
 
-# ─── channels list → .env (safe) + channels.json (redundant) ────
-def save_channels_to_env(channels: list) -> None:
-    """Updates ONLY the CHANNELS_LIST line. Backs up first. Verifies
-    API_ID / API_HASH survive. Atomic write. Never destroys your .env."""
-    if not channels:
-        return
-
-    # Always write channels.json first (independent backup)
-    try:
-        CHANNELS_JSON_PATH.write_text(
-            json.dumps(channels, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-    except Exception as e:
-        print(f"{Fore.YELLOW}[storage] channels.json write failed: {e}")
-
-    if not ENV_PATH.exists():
-        print(f"{Fore.YELLOW}[storage] {ENV_PATH} not found; see channels.json")
-        return
-
-    encoded = base64.b64encode(
-        json.dumps(channels, ensure_ascii=False).encode("utf-8")
-    ).decode("ascii")
-
-    try:
-        original = ENV_PATH.read_text(encoding="utf-8")
-
-        # Backup BEFORE touching anything
-        (ENV_PATH.parent / (ENV_PATH.name + ".bak")).write_text(original, encoding="utf-8")
-
-        # Rebuild content (preserve all other lines)
-        lines = original.splitlines(keepends=True)
-        kept = [l for l in lines if not l.startswith("CHANNELS_LIST=")]
-        if kept and not kept[-1].endswith(("\n", "\r")):
-            kept[-1] += "\n"
-        kept.append(f'CHANNELS_LIST="{encoded}"\n')
-        new_content = "".join(kept)
-
-        # Refuse to commit if we lost a critical key
-        for required in ("API_ID=", "API_HASH="):
-            if required not in new_content:
-                print(f"{Fore.RED}[storage] ABORT: {required} would be lost. .env untouched.")
-                return
-
-        # Atomic write
-        tmp = ENV_PATH.with_suffix(".env.tmp")
-        tmp.write_text(new_content, encoding="utf-8")
-        os.replace(tmp, ENV_PATH)
-
-        os.environ["CHANNELS_LIST"] = encoded
-        print(f"{Fore.GREEN}[storage] ✓ CHANNELS_LIST saved to .env "
-              f"({len(channels)} entries). Backup: .env.bak")
-
-    except Exception as e:
-        print(f"{Fore.RED}[storage] .env update failed: {e}. Original intact.")
-
-
-def load_channels_from_env() -> list:
-    raw = os.getenv("CHANNELS_LIST")
-    if not raw:
-        if CHANNELS_JSON_PATH.exists():
-            try:
-                return json.loads(CHANNELS_JSON_PATH.read_text(encoding="utf-8"))
-            except Exception:
-                return []
+# ─── channels.txt: one @username / link / id per line, # for comments ──
+def _read_lines() -> list:
+    if not CHANNELS_TXT_PATH.exists():
         return []
-    try:
-        return json.loads(base64.b64decode(raw).decode("utf-8"))
-    except Exception:
-        try:
-            return json.loads(raw)
-        except Exception:
-            return []
+    return CHANNELS_TXT_PATH.read_text(encoding="utf-8").splitlines()
+
+
+def _write_lines(lines: list) -> None:
+    tmp = CHANNELS_TXT_PATH.with_suffix(".txt.tmp")
+    tmp.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+    os.replace(tmp, CHANNELS_TXT_PATH)
+
+
+def load_extra_channels() -> list:
+    out = []
+    for line in _read_lines():
+        line = line.strip()
+        if line and not line.startswith("#") and line not in out:
+            out.append(line)
+    return out
+
+
+def add_extra_channel(ident: str) -> None:
+    lines = _read_lines()
+    if ident not in (l.strip() for l in lines):
+        _write_lines(lines + [ident])
+
+
+def remove_extra_channel(ident: str) -> None:
+    _write_lines([l for l in _read_lines() if l.strip() != ident])

@@ -1,7 +1,7 @@
-"""Loads credentials & paths. Never destroys your .env.
+"""Loads settings from .env (see .env.example for the full list).
 
-Important: PROJECT_ROOT is the parent of src/ so .env, downloads/,
-download_state.json, channels.json all live at the top level.
+Relative folder paths are resolved from the project root, not the current
+directory, so `python main.py` works from anywhere.
 """
 import os
 from pathlib import Path
@@ -12,59 +12,51 @@ init(autoreset=True)
 
 # src/config.py → src/ → project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
 ENV_PATH = PROJECT_ROOT / ".env"
-STATE_PATH = PROJECT_ROOT / "download_state.json"
-CHANNELS_JSON_PATH = PROJECT_ROOT / "channels.json"
-DOWNLOADS_DIR = PROJECT_ROOT / "downloads"
-CHANNELS_TXT_PATH = PROJECT_ROOT / "channels.txt"
 
-# Auto-create .env if missing so first run has something to read
-if not ENV_PATH.exists():
-    ENV_PATH.write_text(
-        "API_ID=your_api_id\n"
-        "API_HASH=your_api_hash\n"
-        "SESSION_NAME=default_session\n"
-        "BATCH_SIZE=5\n"
-        "MAX_MESSAGES=1000\n"
-        "CHANNELS_SKIP=\n"
-        "EXTRA_CHANNELS=\n",
-        encoding="utf-8",
-    )
-
+# Real environment variables (e.g. from docker compose) win over .env.
 load_dotenv(ENV_PATH)
 
-API_ID = int(os.getenv("API_ID", "0") or 0)
-API_HASH = os.getenv("API_HASH", "") or ""
-SESSION_NAME = os.getenv("SESSION_NAME", "default_session")
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5"))
-MAX_MESSAGES = int(os.getenv("MAX_MESSAGES", "1000"))
 
-# CHANNELS_SKIP="-100123,-100456" → {-100123, -100456}
-CHANNELS_SKIP = {
-    int(x.strip())
-    for x in (os.getenv("CHANNELS_SKIP", "") or "").split(",")
-    if x.strip().lstrip("-").isdigit()
-}
+def _folder(name: str, default: str) -> Path:
+    path = Path(os.getenv(name) or default).expanduser()
+    return path if path.is_absolute() else (PROJECT_ROOT / path).resolve()
 
-# EXTRA_CHANNELS: comma-separated @username / -100123 / https://t.me/foo
+
+# Where downloaded media is saved
+DOWNLOADS_DIR = _folder("DOWNLOADS_DIR", "downloads")
+# Where the app keeps its own files: session, dedup state, channels.txt, thumbnails
+DATA_DIR = _folder("DATA_DIR", ".")
+
+STATE_PATH = DATA_DIR / "download_state.json"
+CHANNELS_TXT_PATH = DATA_DIR / "channels.txt"
+THUMB_CACHE_DIR = DATA_DIR / ".thumb_cache"
+
+_raw_api_id = (os.getenv("API_ID") or "").strip()
+API_ID = int(_raw_api_id) if _raw_api_id.isdigit() else 0
+API_HASH = (os.getenv("API_HASH") or "").strip()
+SESSION_NAME = os.getenv("SESSION_NAME") or "default_session"
+SESSION_PATH = DATA_DIR / SESSION_NAME
+
+# Defaults for the Download page options
+BATCH_SIZE = int(os.getenv("BATCH_SIZE") or "5")
+MAX_MESSAGES = int(os.getenv("MAX_MESSAGES") or "1000")
+
+# Read-only extras from .env: comma-separated @username / -100123 / https://t.me/foo.
+# Channels added in the web page go to channels.txt instead (see src/storage.py).
 EXTRA_CHANNELS = [
     x.strip()
     for x in (os.getenv("EXTRA_CHANNELS", "") or "").split(",")
     if x.strip()
 ]
 
-# Also append entries from channels.txt (if present) — one per line, # for comments
-if CHANNELS_TXT_PATH.exists():
-    for line in CHANNELS_TXT_PATH.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            EXTRA_CHANNELS.append(line)
-
 
 def validate() -> bool:
     if not API_ID or not API_HASH:
-        print(f"{Fore.RED}API_ID / API_HASH missing in {ENV_PATH}")
-        print(f"{Fore.YELLOW}Get them at https://my.telegram.org/apps and paste into .env")
+        if _raw_api_id and not API_ID:
+            print(f"{Fore.RED}API_ID must be a number (got '{_raw_api_id}')")
+        else:
+            print(f"{Fore.RED}API_ID / API_HASH missing — copy .env.example to .env and fill them in")
+        print(f"{Fore.YELLOW}Get them at https://my.telegram.org/apps")
         return False
     return True

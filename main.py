@@ -1,72 +1,85 @@
-"""Entry point. Run from project root: python main.py"""
+"""Entry point: one web app to download from Telegram and view the media.
+
+    python main.py           →  start the app, open http://127.0.0.1:5000
+    python main.py --login   →  log in to Telegram once (phone + code), then exit
+
+Uses Waitress (production WSGI) — NOT Flask's dev server. Waitress has
+a fixed thread pool + built-in timeouts, so abandoned video streams can
+never exhaust the app.
+
+All settings come from .env — see .env.example for the full list.
+"""
 import asyncio
-from colorama import Fore
-from telethon import TelegramClient
-from src.config import API_ID, API_HASH, SESSION_NAME, validate
-from src.storage import load_state, save_channels_to_env
-from src.runner import fetch_channels, print_channels, build_filter, run_single, run_all
+import os
+import signal
+import sys
+
+# src.config must be imported first: it loads .env, which viewer.config reads.
+from src.config import (
+    API_HASH, API_ID, DATA_DIR, DOWNLOADS_DIR, SESSION_PATH, validate,
+)
+from src.service import TelegramService
+from viewer import config, create_app, scanner
+from viewer.thumbnails import FFMPEG_AVAILABLE
 
 
-async def main():
+def login() -> int:
     if not validate():
-        return
+        return 1
+    from telethon import TelegramClient
 
-    state = load_state()
-    if state["downloaded"]:
-        print(f"{Fore.YELLOW}Loaded dedup state: "
-              f"{len(state['downloaded'])} files tracked.{Fore.RESET}")
+    async def _run():
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        async with TelegramClient(str(SESSION_PATH), API_ID, API_HASH) as client:
+            me = await client.get_me()
+            print(f"Logged in as {me.first_name} (@{me.username or '-'}). "
+                  f"Session saved in {SESSION_PATH}.session")
 
-    async with TelegramClient(SESSION_NAME, API_ID, API_HASH) as client:
-        print(f"{Fore.GREEN}Connected successfully!{Fore.RESET}")
+    asyncio.run(_run())
+    return 0
 
-        print(f"\n{Fore.YELLOW}Fetching your channels and groups...{Fore.RESET}")
-        channels = await fetch_channels(client)
 
-        # Persist the visible list to .env (dialogs only — extras stay in EXTRA_CHANNELS)
-        channels_data = [
-            {
-                "id": c["id"],
-                "title": c["title"],
-                "username": c["username"],
-                "type": "channel" if c["is_channel"] else "group",
-            }
-            for c in channels
-        ]
-        save_channels_to_env(channels_data)
+def main():
+    DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-        print_channels(channels)
+    telegram = TelegramService(on_job_done=scanner.invalidate)
+    telegram.start()
+    app = create_app(telegram)
 
-        print(f"\n{Fore.CYAN}What would you like to do?{Fore.RESET}")
-        print("1. Exit (list only)")
-        print("2. Download media from ONE channel/group")
-        print("3. Download media from ALL channels/groups (dedup)")
-        action = input(f"{Fore.CYAN}Choice (1-3): {Fore.RESET}").strip()
+    # docker stop sends SIGTERM; exiting normally runs the atexit cleanup in TelegramService.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
-        if action == "1":
-            return
-        if action not in ("2", "3"):
-            print(f"{Fore.RED}Invalid choice.{Fore.RESET}")
-            return
+    auth_on = bool(os.getenv("VIEWER_USER") and os.getenv("VIEWER_PASS"))
+    print(f"Downloads:  {DOWNLOADS_DIR}")
+    print(f"App data:   {DATA_DIR}")
+    print(f"Thumbnails: {'enabled' if FFMPEG_AVAILABLE else 'DISABLED — ffmpeg not found'}")
+    print(f"Auth:       {'ENABLED' if auth_on else 'DISABLED — set VIEWER_USER + VIEWER_PASS in .env'}")
+    # PUBLISHED_IP / OPEN_URL are set by docker-compose.yml (the container itself listens on 0.0.0.0).
+    reachable_on = os.getenv("PUBLISHED_IP") or config.HOST
+    if not auth_on and reachable_on not in ("127.0.0.1", "localhost"):
+        print(f"WARNING:    reachable on {reachable_on} without auth — anyone on your network "
+              "can start downloads. Set VIEWER_USER + VIEWER_PASS.")
+    print(f"Open:       {os.getenv('OPEN_URL') or f'http://{config.HOST}:{config.PORT}'}")
 
-        print(f"\n{Fore.CYAN}Choose content type:{Fore.RESET}")
-        print("1. Videos only")
-        print("2. Images only")
-        print("3. PDFs only")
-        print("4. ZIP files only")
-        print("5. All media types")
-        choice = input(f"{Fore.CYAN}Choice (1-5): {Fore.RESET}").strip()
-
-        built = build_filter(choice)
-        if not built:
-            print(f"{Fore.RED}Invalid choice.{Fore.RESET}")
-            return
-        filter_type, folder_name, mime = built
-
-        if action == "3":
-            await run_all(client, channels, filter_type, folder_name, mime, state)
-        else:
-            await run_single(client, channels, filter_type, folder_name, mime, state)
+    # • threads=16            → 16 concurrent requests served in parallel
+    # • channel_timeout=90    → kill idle/half-dead sockets after 90s
+    # • connection_limit=200  → hard cap on simultaneous connections
+    # • asyncore_use_poll=True → better multi-connection handling on Windows
+    from waitress import serve
+    serve(
+        app,
+        host=config.HOST,
+        port=config.PORT,
+        threads=16,
+        channel_timeout=90,
+        connection_limit=200,
+        asyncore_use_poll=True,
+        ident="Telegram Crawler",
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    if "--login" in sys.argv[1:]:
+        sys.exit(login())
+    main()

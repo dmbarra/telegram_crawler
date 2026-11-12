@@ -1,0 +1,30 @@
+# Telegram Crawler in a container.
+#
+#   cp .env.example .env              # fill in API_ID / API_HASH and your folders
+#   mkdir -p <DOWNLOADS_DIR> <DATA_DIR>   # create both folders first (avoids permission errors)
+#   docker compose build
+#   docker compose run --rm crawler python main.py --login   # once: phone + code
+#   docker compose up -d                                      # open http://127.0.0.1:5000
+#
+#   docker compose logs -f            # follow the log
+#   docker compose down               # stop
+services:
+  crawler:
+    build: .
+    image: telegram-crawler
+    env_file: .env
+    environment:
+      # Fixed paths inside the container. Your .env decides which host folders they map to.
+      DOWNLOADS_DIR: /downloads
+      DATA_DIR: /data
+      VIEWER_HOST: 0.0.0.0
+      VIEWER_PORT: "5000"
+      # Only for the startup message: where the page is reachable from outside.
+      PUBLISHED_IP: ${PUBLISH_IP:-127.0.0.1}
+      OPEN_URL: http://localhost:${VIEWER_PORT:-5000}
+    volumes:
+      - ${DOWNLOADS_DIR:-./downloads}:/downloads
+      - ${DATA_DIR:-./data}:/data
+    ports:
+      - "${PUBLISH_IP:-127.0.0.1}:${VIEWER_PORT:-5000}:5000"
+    restart: unless-stopped

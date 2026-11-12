@@ -1,98 +1,61 @@
 {% extends "base.html" %}
-{% block title %}Media Viewer{% endblock %}
+{% block title %}Channels · Media Viewer{% endblock %}
 
 {% block body %}
 <header>
+  <a href="/" class="btn">← Home</a>
   <h1>🎬 Media Viewer</h1>
   <form method="get">
-    <select name="channel" onchange="this.form.submit()">
-      <option value="">All channels</option>
-      {% for c in channels %}
-        <option value="{{ c }}" {% if c == current_channel %}selected{% endif %}>{{ c }}</option>
-      {% endfor %}
-    </select>
-    <select name="type" onchange="this.form.submit()">
-      <option value="">All types</option>
-      <option value="image" {% if current_type == "image" %}selected{% endif %}>Images</option>
-      <option value="video" {% if current_type == "video" %}selected{% endif %}>Videos</option>
-      <option value="audio" {% if current_type == "audio" %}selected{% endif %}>Audio</option>
-    </select>
+    <input type="search" name="q" placeholder="Search channels…" value="{{ query }}">
     <select name="sort" onchange="this.form.submit()">
       {% for key, label in sort_options.items() %}
         <option value="{{ key }}" {% if key == current_sort %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
-    <input type="search" name="q" placeholder="Search filename…" value="{{ query }}">
     <button type="submit" class="btn">Go</button>
     <a href="?refresh=1" class="btn" title="Rescan downloads folder">↻ Rescan</a>
   </form>
   <div class="stats">
-    {{ total_matching }} files · {{ data|length }} channel{% if data|length != 1 %}s{% endif %}
+    {{ total_files }} files · {{ total_channels }} channel{% if total_channels != 1 %}s{% endif %}
   </div>
 </header>
 
-<main id="main" style="--tile-size: {{ tile_size }}px;">
-  {% if not data %}
+<main id="main">
+  {% if not cards %}
     <div class="empty">
-      {% if total_matching == 0 and not query and not current_type and not current_channel %}
-        No media found in <code>downloads/</code>. Run <code>python main.py</code> first.
+      {% if total_channels == 0 %}
+        No media found in <code>downloads/</code>. Use <a href="/download">Download</a> first.
       {% else %}
-        No files match your filters.
+        No channels match "{{ query }}".
       {% endif %}
     </div>
   {% endif %}
 
-  {% for channel, info in data.items() %}
-  <section class="channel" data-channel="{{ channel }}">
-    <h2>
-      {{ channel }}
-      <span class="count" data-loaded="{{ info.files|length }}" data-total="{{ info.total }}">
-        ({{ info.files|length }} / {{ info.total }})
-      </span>
-    </h2>
-    <div class="grid">
-      {% for f in info.files %}
-        {% set src = "/media?p=" ~ (f.rel|urlencode) %}
-        {% if f.type == "image" %}
-          <div class="tile" data-src="{{ src }}" data-type="image"
-               data-name="{{ f.name }}" data-size="{{ f.size_str }}">
-            <img src="{{ src }}" loading="lazy" decoding="async" alt="">
-            <div class="label">{{ f.name }}</div>
-          </div>
-        {% elif f.type == "video" %}
-          <div class="tile video" data-src="{{ src }}" data-type="video"
-               data-name="{{ f.name }}" data-size="{{ f.size_str }}">
-            <img class="thumb" src="/thumb?p={{ f.rel|urlencode }}"
-                 loading="lazy" decoding="async" alt=""
+  <div class="ch-cards">
+    {% for c in cards %}
+      <a class="ch-card" href="{{ url_for('viewer.channel_page', channel=c.name) }}">
+        <div class="cover">
+          {% if c.cover and c.cover.type == "image" %}
+            <img src="/media?p={{ c.cover.rel|urlencode }}" loading="lazy" decoding="async" alt="">
+          {% elif c.cover %}
+            <img src="/thumb?p={{ c.cover.rel|urlencode }}" loading="lazy" decoding="async" alt=""
                  onerror="this.remove()">
-            <div class="play-badge">▶</div>
-            <div class="label">{{ f.name }}</div>
+          {% endif %}
+        </div>
+        <div class="body">
+          <h2>{{ c.name }}</h2>
+          <div class="meta">
+            {{ c.count }} file{% if c.count != 1 %}s{% endif %} · {{ c.size_str }}
           </div>
-        {% else %}
-          <div class="tile audio" data-src="{{ src }}" data-type="audio"
-               data-name="{{ f.name }}" data-size="{{ f.size_str }}">
-            <div class="label">{{ f.name }}</div>
+          <div class="meta">
+            {% if c.counts.image %}{{ c.counts.image }} images{% endif %}
+            {% if c.counts.video %}{% if c.counts.image %} · {% endif %}{{ c.counts.video }} videos{% endif %}
+            {% if c.counts.audio %}{% if c.counts.image or c.counts.video %} · {% endif %}{{ c.counts.audio }} audio{% endif %}
           </div>
-        {% endif %}
-      {% endfor %}
-    </div>
-    {% if info.has_more %}
-      <button class="load-more"
-              data-channel="{{ channel }}"
-              data-offset="{{ info.files|length }}"
-              data-total="{{ info.total }}">
-        Load more ({{ info.total - info.files|length }} remaining)
-      </button>
-    {% endif %}
-  </section>
-  {% endfor %}
+          <div class="meta muted">Last download {{ c.last }}</div>
+        </div>
+      </a>
+    {% endfor %}
+  </div>
 </main>
-
-<div id="lb">
-  <button class="close" onclick="closeLb()" title="Close (Esc)">×</button>
-  <button class="nav prev" onclick="navLb(-1)" title="Previous (←)">‹</button>
-  <button class="nav next" onclick="navLb(1)" title="Next (→)">›</button>
-  <div class="media" id="lb-media"></div>
-  <div class="info" id="lb-info"></div>
-</div>
 {% endblock %}

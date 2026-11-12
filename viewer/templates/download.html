@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Download · Telegram Crawler{% endblock %}
+
+{% block body %}
+<header>
+  <a href="/" class="btn">← Home</a>
+  <h1>Download</h1>
+  <a href="/viewer" class="btn">Open viewer</a>
+  <div class="stats" id="tg-status">Telegram: …</div>
+</header>
+
+<main class="dl">
+  <section class="panel">
+    <h2>1. Channels</h2>
+    <div class="row">
+      <input type="search" id="ch-filter" placeholder="Filter channels…">
+      <label class="check"><input type="checkbox" id="ch-all"> Select all shown</label>
+      <button class="btn" id="ch-refresh">Refresh list</button>
+      <span class="muted" id="ch-count">0 selected</span>
+    </div>
+    <div class="ch-list" id="ch-list"><div class="empty">Waiting for Telegram…</div></div>
+    <form class="row" id="add-form">
+      <input type="text" id="add-ident" placeholder="Add channel: @username, t.me link or ID">
+      <button class="btn" type="submit" id="add-btn">Add</button>
+    </form>
+
+    <h2>2. Options</h2>
+    <div class="row options">
+      <label>Media
+        <select id="media">
+          {% for key, label in media_labels.items() %}
+            <option value="{{ key }}" {% if key == "5" %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Files at the same time
+        <input type="number" id="batch" min="1" max="20" value="{{ default_batch }}">
+      </label>
+      <label>Max messages per channel (0 = all)
+        <input type="number" id="max-msgs" min="0" value="{{ default_max }}">
+      </label>
+    </div>
+
+    <h2>3. Download</h2>
+    <div class="row">
+      <button class="btn primary" id="start" disabled>Start download</button>
+      <button class="btn danger" id="stop" disabled>Stop</button>
+      <span class="msg" id="msg"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Progress</h2>
+    <div class="job-state" id="job-state">Idle</div>
+
+    <div class="bar-label"><span>Channels</span><span id="ch-prog">0 / 0</span></div>
+    <div class="bar"><div id="ch-bar"></div></div>
+
+    <div class="bar-label"><span id="cur-channel">—</span><span id="file-prog">0 / 0 files</span></div>
+    <div class="bar"><div id="file-bar"></div></div>
+
+    <div class="totals">
+      Downloaded <b class="ok" id="t-d">0</b> ·
+      Skipped <b class="warn" id="t-s">0</b> ·
+      Errors <b class="error" id="t-e">0</b>
+    </div>
+
+    <div id="active"></div>
+
+    <h3>Log</h3>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='download.js') }}"></script>
+{% endblock %}

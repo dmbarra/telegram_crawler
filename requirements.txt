@@ -1,6 +1,5 @@
-telethon
-python-dotenv
-colorama
-tqdm
-flask
-waitress
+telethon==1.45.0
+python-dotenv==1.2.4
+colorama==0.4.6
+flask==3.1.3
+waitress==3.0.2

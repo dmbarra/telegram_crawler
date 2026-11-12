@@ -1,12 +1,8 @@
 """Viewer configuration. Reads from .env with sane defaults."""
 import os
-from pathlib import Path
 
-# viewer/config.py → viewer/ → project root
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DOWNLOADS_DIR = PROJECT_ROOT / "downloads"
-# append near the other path definitions
-THUMB_CACHE_DIR = PROJECT_ROOT / ".thumb_cache"
+from src.config import DOWNLOADS_DIR, THUMB_CACHE_DIR  # noqa: F401  (also loads .env)
+
 FFMPEG_BIN = os.getenv("FFMPEG_BIN", "ffmpeg")
 
 # Server

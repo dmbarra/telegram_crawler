@@ -1,5 +1,14 @@
 """Small, side-effect-free helpers."""
+import time
+
 from viewer.config import IMAGE_EXTS, VIDEO_EXTS
+
+CHANNEL_SORTS = {
+    "recent": "Newest download",
+    "name":   "Name A → Z",
+    "files":  "Most files",
+}
+DEFAULT_CHANNEL_SORT = "recent"
 
 SORT_OPTIONS = {
     "newest":    "Newest first (download date)",
@@ -51,3 +60,42 @@ def sort_files(files: list, sort_key: str) -> list:
         return sorted(files, key=lambda x: x["size"])
     # default: newest (download date, descending)
     return sorted(files, key=lambda x: x["mtime"], reverse=True)
+
+
+def channel_summary(name: str, files: list) -> dict:
+    """One card on the channel index: counts, size, last download, cover file."""
+    counts = {"image": 0, "video": 0, "audio": 0}
+    for f in files:
+        counts[f["type"]] += 1
+    newest = max(f["mtime"] for f in files)
+    visual = [f for f in files if f["type"] in ("image", "video")]
+    return {
+        "name": name,
+        "count": len(files),
+        "counts": counts,
+        "size_str": fmt_size(sum(f["size"] for f in files)),
+        "mtime": newest,
+        "last": time.strftime("%Y-%m-%d", time.localtime(newest)),
+        "cover": max(visual, key=lambda f: f["mtime"]) if visual else None,
+    }
+
+
+def sort_channels(cards: list, sort_key: str) -> list:
+    if sort_key == "name":
+        return sorted(cards, key=lambda c: c["name"].lower())
+    if sort_key == "files":
+        return sorted(cards, key=lambda c: c["count"], reverse=True)
+    return sorted(cards, key=lambda c: c["mtime"], reverse=True)
+
+
+def page_window(page: int, pages: int, radius: int = 2) -> list:
+    """Page numbers to show in the pager; None marks a gap ("…").
+    Example: page 6 of 12 → [1, None, 4, 5, 6, 7, 8, None, 12]."""
+    keep = {1, pages, *range(page - radius, page + radius + 1)}
+    out, prev = [], 0
+    for n in sorted(k for k in keep if 1 <= k <= pages):
+        if n - prev > 1:
+            out.append(None)
+        out.append(n)
+        prev = n
+    return out
