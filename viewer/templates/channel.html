@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}{{ channel }} · Media Viewer{% endblock %}
+
+{% macro pager() %}
+  {% if pages > 1 %}
+  <nav class="pager">
+    {% if page > 1 %}
+      <a class="btn" href="{{ url_for('viewer.channel_page', channel=channel, page=page - 1, **url_args) }}">‹ Prev</a>
+    {% else %}
+      <span class="btn disabled">‹ Prev</span>
+    {% endif %}
+    {% for n in window %}
+      {% if n is none %}
+        <span class="gap">…</span>
+      {% elif n == page %}
+        <span class="btn current">{{ n }}</span>
+      {% else %}
+        <a class="btn" href="{{ url_for('viewer.channel_page', channel=channel, page=n, **url_args) }}">{{ n }}</a>
+      {% endif %}
+    {% endfor %}
+    {% if page < pages %}
+      <a class="btn" href="{{ url_for('viewer.channel_page', channel=channel, page=page + 1, **url_args) }}">Next ›</a>
+    {% else %}
+      <span class="btn disabled">Next ›</span>
+    {% endif %}
+    <span class="page-of">page {{ page }} of {{ pages }}</span>
+  </nav>
+  {% endif %}
+{% endmacro %}
+
+{% block body %}
+<header>
+  <a href="{{ url_for('viewer.index') }}" class="btn">← Channels</a>
+  <h1>{{ channel }}</h1>
+  <form method="get">
+    <select name="type" onchange="this.form.submit()">
+      <option value="">All types</option>
+      <option value="image" {% if current_type == "image" %}selected{% endif %}>Images</option>
+      <option value="video" {% if current_type == "video" %}selected{% endif %}>Videos</option>
+      <option value="audio" {% if current_type == "audio" %}selected{% endif %}>Audio</option>
+    </select>
+    <select name="sort" onchange="this.form.submit()">
+      {% for key, label in sort_options.items() %}
+        <option value="{{ key }}" {% if key == current_sort %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <select name="per" onchange="this.form.submit()" title="Tiles per page">
+      {% for n in per_options %}
+        <option value="{{ n }}" {% if n == per %}selected{% endif %}>{{ n }} per page</option>
+      {% endfor %}
+    </select>
+    <input type="search" name="q" placeholder="Search filename…" value="{{ query }}">
+    <button type="submit" class="btn">Go</button>
+    <a href="?refresh=1" class="btn" title="Rescan downloads folder">↻ Rescan</a>
+  </form>
+  <div class="stats">
+    {% if total %}{{ first_index }}–{{ first_index + files|length - 1 }} of {% endif %}{{ total }}
+    file{% if total != 1 %}s{% endif %}{% if total != channel_total %} (filtered from {{ channel_total }}){% endif %}
+  </div>
+</header>
+
+<main id="main" style="--tile-size: {{ tile_size }}px;">
+  {% if not files %}
+    <div class="empty">No files match your filters.</div>
+  {% endif %}
+
+  {{ pager() }}
+
+  <div class="grid">
+    {% for f in files %}
+      {% set src = "/media?p=" ~ (f.rel|urlencode) %}
+      {% if f.type == "image" %}
+        <div class="tile" data-src="{{ src }}" data-type="image"
+             data-name="{{ f.name }}" data-size="{{ f.size_str }}">
+          <img src="{{ src }}" loading="lazy" decoding="async" alt="">
+          <div class="label">{{ f.name }}</div>
+        </div>
+      {% elif f.type == "video" %}
+        <div class="tile video" data-src="{{ src }}" data-type="video"
+             data-name="{{ f.name }}" data-size="{{ f.size_str }}">
+          <img class="thumb" src="/thumb?p={{ f.rel|urlencode }}"
+               loading="lazy" decoding="async" alt=""
+               onerror="this.remove()">
+          <div class="play-badge">▶</div>
+          <div class="label">{{ f.name }}</div>
+        </div>
+      {% else %}
+        <div class="tile audio" data-src="{{ src }}" data-type="audio"
+             data-name="{{ f.name }}" data-size="{{ f.size_str }}">
+          <div class="label">{{ f.name }}</div>
+        </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  {{ pager() }}
+</main>
+
+<div id="lb">
+  <button class="close" onclick="closeLb()" title="Close (Esc)">×</button>
+  <button class="nav prev" onclick="navLb(-1)" title="Previous (←)">‹</button>
+  <button class="nav next" onclick="navLb(1)" title="Next (→)">›</button>
+  <div class="media" id="lb-media"></div>
+  <div class="info" id="lb-info"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='viewer.js') }}"></script>
+{% endblock %}

@@ -13,3 +13,6 @@ download_state.json.bak
 __pycache__/
 *.pyc
 channels.txt
+data/
+*.session
+*.session-journal

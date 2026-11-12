@@ -7,12 +7,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 {% block head %}{% endblock %}
 </head>
-<body
-  data-page-size="{{ page_size or 20 }}"
-  data-current-type="{{ current_type or '' }}"
-  data-current-query="{{ query or '' }}"
-  data-current-sort="{{ current_sort or 'newest' }}"
->
+<body>
 {% block body %}{% endblock %}
 {% block scripts %}{% endblock %}
 </body>

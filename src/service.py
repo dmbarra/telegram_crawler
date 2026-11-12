@@ -5,11 +5,13 @@ the loop thread. Only one download job runs at a time.
 """
 import asyncio
 import atexit
+import sys
 import threading
+import time
 
 from telethon import TelegramClient
 
-from src.config import API_ID, API_HASH, SESSION_NAME, validate
+from src.config import API_ID, API_HASH, DATA_DIR, SESSION_PATH, validate
 from src.progress import Progress
 from src.runner import MEDIA_LABELS, build_filter, fetch_channels, normalize_entity, run_job
 from src.storage import (
@@ -43,7 +45,7 @@ class TelegramService:
     # ─── connection ─────────────────────────────────────────────
     def start(self) -> None:
         if not validate():
-            self.status, self.error = "error", "API_ID / API_HASH missing in .env"
+            self.status, self.error = "error", "API_ID / API_HASH missing or invalid in .env"
             return
         self._submit(self._connect())
         atexit.register(self._shutdown)
@@ -51,9 +53,14 @@ class TelegramService:
     async def _connect(self):
         self.status = "connecting"
         try:
-            self._client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
-            # First login only: Telethon asks for phone + code in the terminal.
-            await self._client.start()
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            self._client = TelegramClient(str(SESSION_PATH), API_ID, API_HASH)
+            await self._client.connect()
+            if not await self._client.is_user_authorized():
+                if not sys.stdin.isatty():
+                    raise RuntimeError("Not logged in. Run once: python main.py --login")
+                # First login only: Telethon asks for phone + code in the terminal.
+                await self._client.start()
             me = await self._client.get_me()
             self.account = me.username and f"@{me.username}" or me.first_name or str(me.id)
             await self._load_channels()
@@ -92,6 +99,11 @@ class TelegramService:
         self.failed_extras = [f for f in self.failed_extras if f["ident"] != ident]
 
     def _shutdown(self):
+        # Let a running job cancel cleanly (removes half-downloaded files, saves state).
+        self.stop_job()
+        deadline = time.time() + 10
+        while self.progress.running and time.time() < deadline:
+            time.sleep(0.1)
         if self._client:
             try:
                 self._submit(self._client.disconnect()).result(timeout=5)
