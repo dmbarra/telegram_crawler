@@ -27,6 +27,7 @@ class Progress:
         self.downloaded = 0
         self.skipped = 0
         self.errors = 0
+        self.duplicates = 0
         self.active = {}
 
     # ─── job lifecycle ──────────────────────────────────────────
@@ -89,6 +90,8 @@ class Progress:
                 self.downloaded += 1
             elif result == "skipped":
                 self.skipped += 1
+            elif result == "duplicate":
+                self.duplicates += 1
             else:
                 self.errors += 1
 
@@ -110,6 +113,7 @@ class Progress:
                 "downloaded": self.downloaded,
                 "skipped": self.skipped,
                 "errors": self.errors,
+                "duplicates": self.duplicates,
                 "active": [dict(f) for f in self.active.values()],
                 "log": [e for e in self._log if e["id"] > since],
             }

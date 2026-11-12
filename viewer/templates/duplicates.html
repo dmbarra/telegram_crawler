@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Duplicates · Media Viewer{% endblock %}
+
+{% macro thumb(rel) %}
+  {% set ext = rel.rsplit(".", 1)[-1].lower() %}
+  {% if ext in ("jpg", "jpeg", "png", "gif", "webp", "bmp") %}
+    <img src="/media?p={{ rel|urlencode }}" loading="lazy" decoding="async" alt="">
+  {% elif ext in ("mp4", "mkv", "mov", "avi", "webm", "m4v") %}
+    <img src="/thumb?p={{ rel|urlencode }}" loading="lazy" decoding="async" alt="" onerror="this.remove()">
+  {% endif %}
+{% endmacro %}
+
+{% block body %}
+<header>
+  <a href="{{ url_for('viewer.index') }}" class="btn">← Channels</a>
+  <h1>Duplicates</h1>
+  <div class="stats">
+    {% if copies %}{{ copies }} extra cop{% if copies == 1 %}y{% else %}ies{% endif %} · {{ wasted }} wasted{% endif %}
+  </div>
+</header>
+
+<main id="main">
+  {% if scanning %}
+    <div class="notice">Still checking your files ({{ scanned }} done). Reload in a moment for the full list.</div>
+  {% endif %}
+
+  {% if not groups %}
+    <div class="empty">{% if scanning %}No duplicates found yet.{% else %}No duplicates. Every group has only one copy of each file.{% endif %}</div>
+  {% else %}
+    <p class="muted">Exact copies inside the same group. The oldest file is kept; the copies are ticked
+      for removal. Nothing is deleted until you press the button.</p>
+    <div class="row">
+      <button class="btn danger" id="dup-remove">Delete ticked copies</button>
+      <span class="msg" id="dup-msg"></span>
+    </div>
+
+    {% for g in groups %}
+      <section class="dup-group">
+        <h2>{{ g.group }}</h2>
+        <div class="dup-row">
+          <figure class="dup keep">
+            <div class="dup-img">{{ thumb(g.keep) }}</div>
+            <figcaption><b>Kept</b> · {{ g.keep.split("/", 1)[1] }}</figcaption>
+          </figure>
+          {% for d in g.dups %}
+            <label class="dup">
+              <div class="dup-img">{{ thumb(d) }}</div>
+              <figcaption><input type="checkbox" class="dup-cb" value="{{ d }}" checked> Copy · {{ d.split("/", 1)[1] }}</figcaption>
+            </label>
+          {% endfor %}
+        </div>
+      </section>
+    {% endfor %}
+  {% endif %}
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const btn = document.getElementById("dup-remove");
+if (btn) btn.addEventListener("click", async () => {
+  const paths = Array.from(document.querySelectorAll(".dup-cb:checked")).map((cb) => cb.value);
+  const msg = document.getElementById("dup-msg");
+  if (!paths.length) { msg.textContent = "Nothing ticked."; return; }
+  if (!confirm(`Delete ${paths.length} copied file(s)? The kept files stay.`)) return;
+  btn.disabled = true;
+  try {
+    const resp = await fetch("/api/duplicates/remove", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
+    msg.textContent = `Deleted ${data.removed} file(s), freed ${data.freed}. Reloading…`;
+    setTimeout(() => location.reload(), 1200);
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "msg error";
+    btn.disabled = false;
+  }
+});
+</script>
+{% endblock %}

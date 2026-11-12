@@ -31,6 +31,9 @@ DATA_DIR = _folder("DATA_DIR", ".")
 STATE_PATH = DATA_DIR / "download_state.json"
 CHANNELS_TXT_PATH = DATA_DIR / "channels.txt"
 THUMB_CACHE_DIR = DATA_DIR / ".thumb_cache"
+HASH_INDEX_PATH = DATA_DIR / "file_hashes.json"
+JOIN_LOG_PATH = DATA_DIR / "join_log.json"
+INVITES_PATH = DATA_DIR / "invites.json"
 
 _raw_api_id = (os.getenv("API_ID") or "").strip()
 API_ID = int(_raw_api_id) if _raw_api_id.isdigit() else 0
@@ -41,6 +44,10 @@ SESSION_PATH = DATA_DIR / SESSION_NAME
 # Defaults for the Download page options
 BATCH_SIZE = int(os.getenv("BATCH_SIZE") or "5")
 MAX_MESSAGES = int(os.getenv("MAX_MESSAGES") or "1000")
+
+# Discover page: safety limits for joining groups (Telegram restricts fast joiners)
+JOIN_DAILY_LIMIT = int(os.getenv("JOIN_DAILY_LIMIT") or "20")
+JOIN_MIN_INTERVAL = int(os.getenv("JOIN_MIN_INTERVAL") or "60")
 
 # Read-only extras from .env: comma-separated @username / -100123 / https://t.me/foo.
 # Channels added in the web page go to channels.txt instead (see src/storage.py).

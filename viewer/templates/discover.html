@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Discover · Telegram Crawler{% endblock %}
+
+{% block body %}
+<header>
+  <a href="/" class="btn">← Home</a>
+  <h1>Discover</h1>
+  <a href="/download" class="btn">Download</a>
+  <a href="/viewer" class="btn">Viewer</a>
+  <div class="stats" id="tg-status">Telegram: …</div>
+</header>
+
+<div class="join-bar" id="join-bar">
+  Joins today: <b id="j-count">0</b> / {{ join_limit }} ·
+  <span id="j-next">next join: now</span>
+  <span class="muted">· safety pause {{ join_interval }} s between joins</span>
+</div>
+
+<main class="dl">
+  <section class="panel">
+    <h2>Public groups and channels</h2>
+    <form class="row" id="search-form">
+      <input type="search" id="q" placeholder="Keyword, e.g. recipes" maxlength="100">
+      <button class="btn primary" type="submit" id="search-btn">Search</button>
+    </form>
+    <div class="muted" id="search-info">Search Telegram for public groups and channels.</div>
+    <div class="results" id="results"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Private groups (invite links)</h2>
+    <p class="muted">Private groups can't be searched. Paste an invite link, or let the app
+      look for links in groups you are already in.</p>
+    <form class="row" id="paste-form">
+      <input type="text" id="paste" placeholder="Paste invite link(s): t.me/+AbCd… or t.me/joinchat/…">
+      <button class="btn" type="submit" id="paste-btn">Add</button>
+    </form>
+
+    <h3>Find invite links in your groups</h3>
+    <div class="row">
+      <input type="search" id="scan-filter" placeholder="Filter groups…">
+      <label class="check"><input type="checkbox" id="scan-all"> Select all shown</label>
+      <span class="muted" id="scan-count">0 selected</span>
+    </div>
+    <div class="ch-list short" id="scan-list"><div class="empty">Waiting for Telegram…</div></div>
+    <div class="row options">
+      <label>Messages per group
+        <input type="number" id="scan-limit" min="1" max="5000" value="500">
+      </label>
+      <label class="grow">Keywords (optional, comma separated)
+        <input type="text" id="scan-kw" placeholder="recipes, cooking">
+      </label>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="scan-start" disabled>Scan</button>
+      <button class="btn danger" id="scan-stop" disabled>Stop</button>
+      <span class="muted" id="scan-info"></span>
+    </div>
+
+    <h3>Found invite links</h3>
+    <div class="row">
+      <input type="search" id="inv-filter" placeholder="Filter by keyword…">
+      <label class="check"><input type="checkbox" id="inv-ignored"> Show ignored</label>
+      <span class="muted" id="inv-count"></span>
+    </div>
+    <div class="results" id="invites"></div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='discover.js') }}"></script>
+{% endblock %}

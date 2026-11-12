@@ -11,7 +11,11 @@ import time
 
 from telethon import TelegramClient
 
-from src.config import API_ID, API_HASH, DATA_DIR, SESSION_PATH, validate
+from src.config import (
+    API_ID, API_HASH, DATA_DIR, DOWNLOADS_DIR, HASH_INDEX_PATH, SESSION_PATH, validate,
+)
+from src.dedup import HashIndex
+from src.discover import Discovery
 from src.progress import Progress
 from src.runner import MEDIA_LABELS, build_filter, fetch_channels, normalize_entity, run_job
 from src.storage import (
@@ -28,6 +32,8 @@ class TelegramService:
         self.channels = []
         self.failed_extras = []
         self._state = load_state()
+        self.hashes = HashIndex(DOWNLOADS_DIR, HASH_INDEX_PATH)
+        self.discovery = Discovery(self)
         self._on_job_done = on_job_done
         self._client = None
         self._job = None
@@ -44,6 +50,8 @@ class TelegramService:
 
     # ─── connection ─────────────────────────────────────────────
     def start(self) -> None:
+        # Fingerprint files already on disk (first start, or files added by hand).
+        threading.Thread(target=self.hashes.scan_existing, daemon=True, name="hash-scan").start()
         if not validate():
             self.status, self.error = "error", "API_ID / API_HASH missing or invalid in .env"
             return
@@ -164,6 +172,40 @@ class TelegramService:
                 self.progress.request_stop()
                 self._job.cancel()
 
+    def remove_duplicates(self, rels):
+        """Delete the given copies (only files that really are duplicates).
+        Returns (summary dict, None) or (None, error message)."""
+        with self._lock:
+            if self.progress.running:
+                return None, "Wait until the download finishes"
+            if self.hashes.scanning:
+                return None, "Still checking your files — try again in a moment"
+            keep_for = {r: d["keep"] for d in self.hashes.find_duplicates() for r in d["dups"]}
+            removed = freed = 0
+            for rel in rels:
+                keep = keep_for.get(rel)
+                if not keep:
+                    continue
+                path = DOWNLOADS_DIR / rel
+                try:
+                    size = path.stat().st_size
+                    path.unlink()
+                except OSError:
+                    continue
+                self.hashes.forget(rel)
+                removed += 1
+                freed += size
+                # Point history at the kept copy, so the file is not downloaded again.
+                old, new = str(path), str(DOWNLOADS_DIR / keep)
+                for entry in self._state["downloaded"].values():
+                    if entry.get("path") == old:
+                        entry["path"] = new
+            save_state(self._state)
+            self.hashes.save()
+        if self._on_job_done:
+            self._on_job_done()
+        return {"removed": removed, "freed": freed}, None
+
     def snapshot(self, since: int = 0) -> dict:
         return {
             "telegram": {"status": self.status, "error": self.error, "account": self.account},
@@ -175,9 +217,9 @@ class TelegramService:
         p = self.progress
         try:
             await run_job(self._client, channels, filter_type, folder_name, mime,
-                          batch_size, max_messages, self._state, p)
+                          batch_size, max_messages, self._state, p, self.hashes)
             p.log(f"Done. {p.downloaded} downloaded, {p.skipped} skipped, "
-                  f"{p.errors} errors.", "ok")
+                  f"{p.duplicates} duplicates not kept, {p.errors} errors.", "ok")
         except asyncio.CancelledError:
             p.log("Stopped by user.", "warn")
         except Exception as e:
