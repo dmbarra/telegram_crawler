@@ -51,7 +51,7 @@ def build_filter(choice: str):
 
 
 # ─── normalize one Chat object → channel dict ──────────────────
-def _normalize_chat(chat):
+def normalize_chat(chat):
     """`chat` is a Telethon Channel or Chat from GetDialogsResponse.
     These ARE valid entities — client.get_messages(chat, ...) works."""
     is_channel = bool(getattr(chat, "broadcast", False))
@@ -138,7 +138,7 @@ async def fetch_channels(client, log):
         seen_ids.add(chat.id)
         all_chats.append(chat)
 
-    normalized = [_normalize_chat(chat) for chat in all_chats]
+    normalized = [normalize_chat(chat) for chat in all_chats]
 
     # ── Merge extra channels ──
     by_id = {c["id"]: c for c in normalized}
@@ -212,7 +212,7 @@ async def _fetch_messages(client, entity, filter_type, mime, max_messages, log):
 
 # ─── run: one or more channels ──────────────────────────────────
 async def run_job(client, channels, filter_type, folder_name, mime,
-                  batch_size, max_messages, state, progress):
+                  batch_size, max_messages, state, progress, hashes=None):
     log = progress.log
     for i, ch in enumerate(channels, 1):
         title = ch["title"]
@@ -249,7 +249,7 @@ async def run_job(client, channels, filter_type, folder_name, mime,
 
         ch_folder = safe_filename(title or f"channel_{ch['id']}")
         log(f"  → downloading {len(msgs)} items")
-        d, s, e = await download_in_batches(
-            msgs, f"{ch_folder}/{folder_name}", batch_size, state, title, progress
+        d, s, e, dup = await download_in_batches(
+            msgs, f"{ch_folder}/{folder_name}", batch_size, state, title, progress, hashes
         )
-        log(f"  Downloaded {d} | Skipped {s} | Errors {e}", "ok")
+        log(f"  Downloaded {d} | Skipped {s} | Duplicates {dup} | Errors {e}", "ok")

@@ -291,6 +291,7 @@ function renderJob(j) {
   $("t-d").textContent = j.downloaded;
   $("t-s").textContent = j.skipped;
   $("t-e").textContent = j.errors;
+  $("t-dup").textContent = j.duplicates;
 
   $("stop").disabled = !j.running || j.stopping;
   renderActive(j.active);
