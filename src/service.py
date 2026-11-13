@@ -5,6 +5,7 @@ the loop thread. Only one download job runs at a time.
 """
 import asyncio
 import atexit
+import shutil
 import sys
 import threading
 import time
@@ -200,6 +201,50 @@ class TelegramService:
                 for entry in self._state["downloaded"].values():
                     if entry.get("path") == old:
                         entry["path"] = new
+            save_state(self._state)
+            self.hashes.save()
+        if self._on_job_done:
+            self._on_job_done()
+        return {"removed": removed, "freed": freed}, None
+
+    def delete_paths(self, rels):
+        """Delete files/folders under DOWNLOADS_DIR. History marks them deleted so they are not downloaded again.
+        Returns (summary dict, None) or (None, error message)."""
+        root = DOWNLOADS_DIR.resolve()
+        targets = []
+        for rel in rels:
+            path = DOWNLOADS_DIR / rel
+            try:
+                resolved = path.resolve()
+                resolved.relative_to(root)
+            except (ValueError, OSError):
+                return None, f"Not allowed: {rel}"
+            if resolved == root:
+                return None, "Cannot delete the downloads folder itself"
+            targets.append(path)
+
+        with self._lock:
+            if self.progress.running:
+                return None, "Wait until the download finishes"
+            if self.hashes.scanning:
+                return None, "Still checking your files — try again in a moment"
+            removed = freed = 0
+            gone = set()
+            for path in targets:
+                files = [f for f in path.rglob("*") if f.is_file()] if path.is_dir() else [path]
+                try:
+                    sizes = sum(f.stat().st_size for f in files)
+                    shutil.rmtree(path) if path.is_dir() else path.unlink()
+                except OSError:
+                    continue
+                removed += len(files)
+                freed += sizes
+                for f in files:
+                    gone.add(str(f))
+                    self.hashes.forget(f.relative_to(DOWNLOADS_DIR).as_posix())
+            for entry in self._state["downloaded"].values():
+                if entry.get("path") in gone:
+                    entry["deleted"] = True
             save_state(self._state)
             self.hashes.save()
         if self._on_job_done:

@@ -27,10 +27,11 @@ def _discard(path) -> None:
 async def download_file(message, folder_name, state, channel_title, progress, hashes=None):
     key = get_media_key(message)
 
-    # ── dedup: already tracked AND file still on disk → skip
+    # ── dedup: already tracked AND (file still on disk OR deleted on purpose) → skip
     if key and key in state["downloaded"]:
-        path = state["downloaded"][key].get("path")
-        if path and os.path.exists(path):
+        entry = state["downloaded"][key]
+        path = entry.get("path")
+        if entry.get("deleted") or (path and os.path.exists(path)):
             progress.file_end(message.id, "skipped")
             return "skipped"
 

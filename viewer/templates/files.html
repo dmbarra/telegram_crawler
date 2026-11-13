@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Files Manager{% endblock %}
+
+{% block body %}
+<header>
+  <a href="/" class="btn">← Home</a>
+  <h1>Files Manager</h1>
+  <form method="get">
+    <input type="hidden" name="p" value="{{ rel }}">
+    <select name="sort" onchange="this.form.submit()">
+      {% for key, label in sort_options.items() %}
+        <option value="{{ key }}" {% if key == current_sort %}selected{% endif %}>Sort: {{ label }}</option>
+      {% endfor %}
+    </select>
+  </form>
+  <div class="stats">{{ free_str }} free of {{ disk_str }}</div>
+</header>
+
+<main id="main">
+  <nav class="crumbs">
+    <a href="?sort={{ current_sort }}">downloads</a>
+    {% for c in crumbs %} / <a href="?p={{ c.rel|urlencode }}&sort={{ current_sort }}">{{ c.name }}</a>{% endfor %}
+    <span class="muted">· {{ entries|length }} item{% if entries|length != 1 %}s{% endif %} · {{ total_str }}</span>
+  </nav>
+
+  {% if not entries %}
+    <div class="empty">This folder is empty.</div>
+  {% else %}
+    <div class="row">
+      <button class="btn danger" id="fm-delete" disabled>Delete selected</button>
+      <span class="msg" id="fm-msg"></span>
+    </div>
+    <table class="fm">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="fm-all" title="Select all"></th>
+          <th>Name</th><th class="num">Size</th><th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in entries %}
+          <tr>
+            <td><input type="checkbox" class="fm-cb" value="{{ e.rel }}" data-dir="{{ 1 if e.is_dir else 0 }}"></td>
+            <td class="name">
+              {% if e.is_dir %}
+                <a href="?p={{ e.rel|urlencode }}&sort={{ current_sort }}">📁 {{ e.name }}/</a>
+              {% else %}
+                <a href="/media?p={{ e.rel|urlencode }}" target="_blank" rel="noopener">{{ e.name }}</a>
+              {% endif %}
+            </td>
+            <td class="num">{{ e.size_str }}</td>
+            <td class="muted">{{ e.date }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const btn = document.getElementById("fm-delete");
+const all = document.getElementById("fm-all");
+const boxes = () => Array.from(document.querySelectorAll(".fm-cb"));
+const checked = () => boxes().filter((cb) => cb.checked);
+const update = () => { if (btn) btn.disabled = !checked().length; };
+
+document.addEventListener("change", (e) => {
+  if (e.target === all) boxes().forEach((cb) => { cb.checked = all.checked; });
+  update();
+});
+
+if (btn) btn.addEventListener("click", async () => {
+  const sel = checked();
+  const dirs = sel.filter((cb) => cb.dataset.dir === "1").length;
+  const msg = document.getElementById("fm-msg");
+  const what = `${sel.length - dirs} file(s)` + (dirs ? ` and ${dirs} folder(s) with everything inside` : "");
+  if (!confirm(`Delete ${what}? This cannot be undone.`)) return;
+  btn.disabled = true;
+  try {
+    const resp = await fetch("/api/files/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths: sel.map((cb) => cb.value) }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
+    msg.textContent = `Deleted ${data.removed} file(s), freed ${data.freed}. Reloading…`;
+    msg.className = "msg";
+    setTimeout(() => location.reload(), 1200);
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "msg error";
+    btn.disabled = false;
+  }
+});
+</script>
+{% endblock %}
