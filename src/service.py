@@ -63,7 +63,9 @@ class TelegramService:
         self.status = "connecting"
         try:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
-            self._client = TelegramClient(str(SESSION_PATH), API_ID, API_HASH)
+            # No event handlers exist; skipping updates avoids idle CPU from busy groups.
+            self._client = TelegramClient(str(SESSION_PATH), API_ID, API_HASH,
+                                          receive_updates=False)
             await self._client.connect()
             if not await self._client.is_user_authorized():
                 if not sys.stdin.isatty():
