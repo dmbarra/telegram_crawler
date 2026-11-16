@@ -3,7 +3,8 @@ import concurrent.futures
 
 from flask import Blueprint, abort, current_app, jsonify, render_template, request
 
-from src.config import JOIN_DAILY_LIMIT, JOIN_MIN_INTERVAL
+from src.config import DOWNLOADS_DIR, JOIN_DAILY_LIMIT, JOIN_MIN_INTERVAL
+from src.dedup import find_duplicates
 from src.discover import INVITE_HASH_RE, DiscoverError
 from viewer.download_routes import _json_body
 from viewer.helpers import fmt_size
@@ -56,16 +57,17 @@ def discover_page():
 
 @bp.route("/duplicates")
 def duplicates_page():
-    hashes = _tg().hashes
-    groups = hashes.find_duplicates()
+    library = _tg().library
+    groups = find_duplicates(library, DOWNLOADS_DIR)
+    titles = library.channel_titles()
+    for g in groups:
+        g["title"] = titles.get(g["group"], g["group"])
     copies = sum(len(g["dups"]) for g in groups)
     return render_template(
         "duplicates.html",
         groups=groups,
         copies=copies,
         wasted=fmt_size(sum(g["size"] * len(g["dups"]) for g in groups)),
-        scanning=hashes.scanning,
-        scanned=hashes.scanned,
     )
 
 

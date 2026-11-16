@@ -42,7 +42,7 @@ def apply_filters(files: list, kind: str, q: str) -> list:
     if kind:
         files = [f for f in files if f["type"] == kind]
     if q:
-        files = [f for f in files if q in f["name"].lower()]
+        files = [f for f in files if q in f["name"].lower() or q in f["caption"].lower()]
     return files
 
 
@@ -62,7 +62,7 @@ def sort_files(files: list, sort_key: str) -> list:
     return sorted(files, key=lambda x: x["mtime"], reverse=True)
 
 
-def channel_summary(name: str, files: list) -> dict:
+def channel_summary(name: str, title: str, files: list) -> dict:
     """One card on the channel index: counts, size, last download, cover file."""
     counts = {"image": 0, "video": 0, "audio": 0}
     for f in files:
@@ -71,6 +71,7 @@ def channel_summary(name: str, files: list) -> dict:
     visual = [f for f in files if f["type"] in ("image", "video")]
     return {
         "name": name,
+        "title": title,
         "count": len(files),
         "counts": counts,
         "size_str": fmt_size(sum(f["size"] for f in files)),
@@ -82,7 +83,7 @@ def channel_summary(name: str, files: list) -> dict:
 
 def sort_channels(cards: list, sort_key: str) -> list:
     if sort_key == "name":
-        return sorted(cards, key=lambda c: c["name"].lower())
+        return sorted(cards, key=lambda c: c["title"].lower())
     if sort_key == "files":
         return sorted(cards, key=lambda c: c["count"], reverse=True)
     return sorted(cards, key=lambda c: c["mtime"], reverse=True)

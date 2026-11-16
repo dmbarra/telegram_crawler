@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ channel }} · Media Viewer{% endblock %}
+{% block title %}{{ channel_title }} · Media Viewer{% endblock %}
 
 {% macro pager() %}
   {% if pages > 1 %}
@@ -31,7 +31,7 @@
 {% block body %}
 <header>
   <a href="{{ url_for('viewer.index') }}" class="btn">← Channels</a>
-  <h1>{{ channel }}</h1>
+  <h1>{{ channel_title }}</h1>
   <form method="get">
     <select name="type" onchange="this.form.submit()">
       <option value="">All types</option>
@@ -49,7 +49,7 @@
         <option value="{{ n }}" {% if n == per %}selected{% endif %}>{{ n }} per page</option>
       {% endfor %}
     </select>
-    <input type="search" name="q" placeholder="Search filename…" value="{{ query }}">
+    <input type="search" name="q" placeholder="Search name or caption…" value="{{ query }}">
     <button type="submit" class="btn">Go</button>
     <a href="?refresh=1" class="btn" title="Rescan downloads folder">↻ Rescan</a>
   </form>

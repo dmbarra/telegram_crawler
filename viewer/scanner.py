@@ -1,12 +1,15 @@
-"""Walk downloads/ once, cache the result, rescan only on demand."""
+"""Walk downloads/ once, cache the result, rescan only on demand.
+
+Captions come from the library, so search can match them.
+"""
 from viewer.config import DOWNLOADS_DIR, ALL_EXTS
 from viewer.helpers import fmt_size, classify_ext
 
 _cache = {"data": None}
 
 
-def scan_media(force: bool = False) -> dict:
-    """Returns {channel_name: [ {rel, name, type, size, size_str, mtime}, ... ]}.
+def scan_media(library, force: bool = False) -> dict:
+    """Returns {folder: [ {rel, name, caption, type, size, size_str, mtime}, ... ]}.
 
     Files are stored unsorted — the route layer decides the order.
     Cache lives until force=True.
@@ -14,6 +17,7 @@ def scan_media(force: bool = False) -> dict:
     if not force and _cache["data"] is not None:
         return _cache["data"]
 
+    captions = {r["path"]: r["caption"] for r in library.kept_files() if r["caption"]}
     result: dict[str, list] = {}
     if DOWNLOADS_DIR.is_dir():
         for channel_dir in sorted(DOWNLOADS_DIR.iterdir()):
@@ -28,9 +32,11 @@ def scan_media(force: bool = False) -> dict:
                     stat = f.stat()
                 except OSError:
                     continue
+                rel = f.relative_to(DOWNLOADS_DIR).as_posix()
                 files.append({
-                    "rel": f.relative_to(DOWNLOADS_DIR).as_posix(),
+                    "rel": rel,
                     "name": f.name,
+                    "caption": captions.get(rel, ""),
                     "type": classify_ext(f.suffix),
                     "size": stat.st_size,
                     "size_str": fmt_size(stat.st_size),

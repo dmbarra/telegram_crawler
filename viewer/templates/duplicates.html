@@ -20,12 +20,8 @@
 </header>
 
 <main id="main">
-  {% if scanning %}
-    <div class="notice">Still checking your files ({{ scanned }} done). Reload in a moment for the full list.</div>
-  {% endif %}
-
   {% if not groups %}
-    <div class="empty">{% if scanning %}No duplicates found yet.{% else %}No duplicates. Every group has only one copy of each file.{% endif %}</div>
+    <div class="empty">No duplicates. Every group has only one copy of each file.</div>
   {% else %}
     <p class="muted">Exact copies inside the same group. The oldest file is kept; the copies are ticked
       for removal. Nothing is deleted until you press the button.</p>
@@ -36,7 +32,7 @@
 
     {% for g in groups %}
       <section class="dup-group">
-        <h2>{{ g.group }}</h2>
+        <h2>{{ g.title }}</h2>
         <div class="dup-row">
           <figure class="dup keep">
             <div class="dup-img">{{ thumb(g.keep) }}</div>
