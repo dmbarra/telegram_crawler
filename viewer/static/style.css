@@ -258,3 +258,17 @@ input[type=number] { width: 90px; }
 .fm .name { word-break: break-all; }
 .fm .name a { color: #e5e7eb; text-decoration: none; }
 .fm .name a:hover { color: #60a5fa; }
+
+/* ── Migrate page ───────────────────────────────────────── */
+.mg-result { padding: 10px 14px; border: 1px solid #2a2f3a; border-radius: 8px; margin: 8px 0;
+             font-size: 14px; color: #d1d5db; background: #0f1115; }
+.mg-result.ok { border-color: #065f46; color: #34d399; }
+.mg-result.error { border-color: #7f1d1d; color: #f87171; }
+.mg-steps { list-style: none; padding: 0; margin: 10px 0; font-size: 13px; }
+.mg-steps li { padding: 4px 0; }
+.mg-steps li.info { color: #d1d5db; }
+.mg-detail > td { background: #0b0d11; }
+.mg-detail details { margin-top: 8px; font-size: 13px; }
+tr.mg-row.ok td { color: #34d399; }
+tr.mg-row.error td { color: #f87171; }
+.fm-failed { font-size: 13px; margin: 0 0 10px; }

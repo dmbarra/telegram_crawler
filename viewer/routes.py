@@ -1,30 +1,34 @@
-"""Viewer endpoints: channel index, one channel with pages, media + thumbnails."""
+"""Viewer endpoints: channel index, one channel with pages, media + thumbnails.
+
+Everything listed comes from the library (src/db.py), not from walking folders.
+"""
 import math
 import mimetypes
 from flask import (
     Blueprint, abort, current_app, make_response, render_template, request,
     send_file, send_from_directory,
 )
+from src.migrate import old_folder_names
 from viewer import config
-from viewer.scanner import scan_media
 from viewer.helpers import (
-    apply_filters, sort_files, SORT_OPTIONS, DEFAULT_SORT,
-    CHANNEL_SORTS, DEFAULT_CHANNEL_SORT, channel_summary, sort_channels, page_window,
+    SORT_OPTIONS, DEFAULT_SORT, CHANNEL_SORTS, DEFAULT_CHANNEL_SORT,
+    card, file_item, sort_channels, page_window,
 )
 from viewer.thumbnails import get_thumbnail
 
 bp = Blueprint("viewer", __name__)
 
 PER_PAGE_OPTIONS = sorted({20, 50, 100, config.PAGE_SIZE})
-TYPES = ("", "image", "video", "audio")
-
-
-def _normalize_sort(raw: str) -> str:
-    return raw if raw in SORT_OPTIONS else DEFAULT_SORT
+VIEW_KINDS = ("images", "videos", "audio")
+TYPES = {"": "", "image": "images", "video": "videos", "audio": "audio"}
 
 
 def _library():
     return current_app.extensions["telegram"].library
+
+
+def _normalize_sort(raw: str) -> str:
+    return raw if raw in SORT_OPTIONS else DEFAULT_SORT
 
 
 def _per_page() -> int:
@@ -40,31 +44,32 @@ def _per_page() -> int:
 # ─── GET /viewer — channel index ────────────────────────────────
 @bp.route("/viewer")
 def index():
-    data = scan_media(_library(), force=request.args.get("refresh") == "1")
-    titles = _library().channel_titles()
+    lib = _library()
     q = request.args.get("q", "").strip().lower()
     sort_key = request.args.get("sort", DEFAULT_CHANNEL_SORT)
     if sort_key not in CHANNEL_SORTS:
         sort_key = DEFAULT_CHANNEL_SORT
 
-    cards = [channel_summary(name, titles.get(name, name), files) for name, files in data.items()]
-    cards = [c for c in cards if not q or q in c["title"].lower()]
+    all_cards = [card(r) for r in lib.channel_cards(VIEW_KINDS)]
+    cards = [c for c in all_cards if not q or q in c["title"].lower()]
     return render_template(
         "index.html",
         cards=sort_channels(cards, sort_key),
-        total_channels=len(data),
-        total_files=sum(len(f) for f in data.values()),
+        total_channels=len(all_cards),
+        total_files=sum(c["count"] for c in all_cards),
         query=q,
         current_sort=sort_key,
         sort_options=CHANNEL_SORTS,
+        old_folders=len(old_folder_names(lib)),
     )
 
 
-# ─── GET /viewer/<channel> — one channel, paged ─────────────────
-@bp.route("/viewer/<channel>")
+# ─── GET /viewer/<channel id> — one channel, paged ──────────────
+@bp.route("/viewer/<int:channel>")
 def channel_page(channel):
-    data = scan_media(_library(), force=request.args.get("refresh") == "1")
-    if channel not in data:
+    lib = _library()
+    _, channel_total = lib.channel_files(channel, VIEW_KINDS, limit=0)
+    if not channel_total:
         abort(404)
 
     kind = request.args.get("type", "")
@@ -73,22 +78,24 @@ def channel_page(channel):
     q = request.args.get("q", "").strip().lower()
     sort_key = _normalize_sort(request.args.get("sort", DEFAULT_SORT))
     per = _per_page()
-
-    files = sort_files(apply_filters(data[channel], kind, q), sort_key)
-    pages = max(1, math.ceil(len(files) / per))
     try:
         page = int(request.args.get("page", "1"))
     except ValueError:
         page = 1
+
+    _, total = lib.channel_files(channel, VIEW_KINDS, TYPES[kind], q, limit=0)
+    pages = max(1, math.ceil(total / per))
     page = min(max(page, 1), pages)
+    rows, _ = lib.channel_files(channel, VIEW_KINDS, TYPES[kind], q, sort_key,
+                                limit=per, offset=(page - 1) * per)
 
     resp = make_response(render_template(
         "channel.html",
         channel=channel,
-        channel_title=_library().channel_titles().get(channel, channel),
-        files=files[(page - 1) * per: page * per],
-        total=len(files),
-        channel_total=len(data[channel]),
+        channel_title=lib.channel_titles().get(str(channel), f"Channel {channel}"),
+        files=[file_item(r) for r in rows],
+        total=total,
+        channel_total=channel_total,
         page=page,
         pages=pages,
         window=page_window(page, pages),

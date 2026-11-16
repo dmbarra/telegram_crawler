@@ -3,21 +3,36 @@
 Old layout: DATA_DIR/download_state.json, file_hashes.json, channels.txt and
 DOWNLOADS_DIR/<channel title>/<filter>/<caption>.ext.
 
+Every file in an old folder ends up in the DB and in the new layout:
+  - matched to its Telegram message (old record, or old name + size) → <type>/<date>_<msg_id>.ext
+  - not matched → unmatched/<sha256[:16]>.ext
+  - exact copy of a file already in the new layout → old copy removed
+
 Remove this file, viewer/migrate_routes.py and viewer/templates/migrate.html
-(plus the blueprint line and the home card) once every folder is moved.
+(plus the blueprint line, the home card and the "old folders" notices) once every folder is moved.
 """
 import json
+import mimetypes
+import re
 import shutil
 import time
 from pathlib import Path
 
-from src.config import DATA_DIR, DOWNLOADS_DIR
+from telethon.tl.types import InputMessagesFilterDocument, InputMessagesFilterPhotoVideo
+
+from src.config import DATA_DIR, DB_PATH, DOWNLOADS_DIR
 from src.dedup import hash_file
-from src.utils import get_media_key, media_folder, media_rel_path, safe_filename
+from src.utils import (
+    folder_for_mime, get_media_key, guess_extension, media_folder, media_rel_path, safe_filename,
+)
 
 STATE_PATH = DATA_DIR / "download_state.json"
 HASHES_PATH = DATA_DIR / "file_hashes.json"
 CHANNELS_TXT = DATA_DIR / "channels.txt"
+JUNK = {".DS_Store", "Thumbs.db", "desktop.ini"}
+
+_MSG_CACHE_SECONDS = 15 * 60
+_msg_cache = {}
 
 
 class MigrationError(Exception):
@@ -26,13 +41,9 @@ class MigrationError(Exception):
 
 def _guard(svc):
     if svc.status != "ready":
-        raise MigrationError("Telegram is not connected")
+        raise MigrationError("Telegram is not connected. Wait a moment and reload the page.")
     if svc.progress.running:
-        raise MigrationError("Wait until the download finishes")
-
-
-def _load_json(path: Path):
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+        raise MigrationError("A download is running. Wait until it finishes.")
 
 
 def _old_rel(path_str: str):
@@ -46,99 +57,113 @@ def _old_rel(path_str: str):
         return None
 
 
-# ─── step 1: backup + import ────────────────────────────────────
-def backup_and_import(svc) -> dict:
+# ─── step 1: create the database ────────────────────────────────
+def create_database(svc) -> dict:
+    """Returns {"ok", "steps": [{"level", "text"}]} — every step is reported, errors included."""
+    steps = []
+
+    def step(text, level="ok"):
+        steps.append({"level": level, "text": text})
+        svc.progress.log(f"Create database: {text}", level)
+
+    _guard(svc)
     with svc._lock:
-        _guard(svc)
         found = [p for p in (STATE_PATH, HASHES_PATH, CHANNELS_TXT) if p.exists()]
-        if not found:
-            raise MigrationError(f"No old files found in {DATA_DIR}")
-        backup = DATA_DIR / f"backup-{time.strftime('%Y%m%d-%H%M%S')}"
-        backup.mkdir(parents=True, exist_ok=True)
-        for p in found:
-            shutil.copy2(p, backup / p.name)
+        if found:
+            backup = DATA_DIR / f"backup-{time.strftime('%Y%m%d-%H%M%S')}"
+            backup.mkdir(parents=True, exist_ok=True)
+            for p in found:
+                shutil.copy2(p, backup / p.name)
+            step(f"Backup of {', '.join(p.name for p in found)} saved in {backup}")
+        else:
+            step("No old state files found. Files will be matched to Telegram by name and size.", "info")
 
-        hashes = _load_json(HASHES_PATH) or {}
-        state = (_load_json(STATE_PATH) or {}).get("downloaded", {})
-        added = known = outside = 0
-        for key, e in state.items():
-            rel = _old_rel(e.get("path") or "")
-            if not rel:
-                outside += 1
-                continue
-            sha = (hashes.get(rel) or [None, None, None])[2]
-            if svc.library.import_legacy(key, e.get("message_id"), rel, None, e.get("size"),
-                                         sha, bool(e.get("deleted"))):
-                added += 1
-            else:
-                known += 1
+        hashes = {}
+        if HASHES_PATH.exists():
+            try:
+                hashes = json.loads(HASHES_PATH.read_text(encoding="utf-8"))
+                step(f"Read {len(hashes)} fingerprints from {HASHES_PATH.name}")
+            except Exception as e:
+                step(f"Could not read {HASHES_PATH.name}: {e}. Fingerprints will be computed again.", "warn")
 
-    idents = []
+        if STATE_PATH.exists():
+            try:
+                state = json.loads(STATE_PATH.read_text(encoding="utf-8")).get("downloaded", {})
+            except Exception as e:
+                state = {}
+                step(f"Could not read {STATE_PATH.name}: {e}. Files will be matched by name and size.",
+                     "error")
+            added = known = 0
+            outside = []
+            for key, e in state.items():
+                rel = _old_rel(e.get("path") or "")
+                if not rel:
+                    outside.append(e.get("path") or "(empty)")
+                    continue
+                sha = (hashes.get(rel) or [None, None, None])[2]
+                if svc.library.import_legacy(key, e.get("message_id"), rel, None, e.get("size"),
+                                             sha, bool(e.get("deleted"))):
+                    added += 1
+                else:
+                    known += 1
+            step(f"Imported {added} download records ({known} were already in the database)")
+            if outside:
+                step(f"{len(outside)} records point outside {DOWNLOADS_DIR} and were skipped. "
+                     f"Example: {outside[0]}. Those files will be matched by name and size.", "warn")
+
     if CHANNELS_TXT.exists():
+        idents = []
         for line in CHANNELS_TXT.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line and not line.startswith("#") and line not in idents:
                 idents.append(line)
-    saved = svc.library.extra_idents()
-    channels_added, channels_failed = 0, []
-    for ident in idents:
-        if ident in saved:
-            continue
-        cid, err = svc.add_channel(ident)
-        if cid is None:
-            channels_failed.append(f"{ident}: {err}")
-        elif not err:
-            channels_added += 1
+        saved = svc.library.extra_idents()
+        added = 0
+        for ident in idents:
+            if ident in saved:
+                continue
+            try:
+                cid, err = svc.add_channel(ident)
+            except Exception as e:
+                cid, err = None, str(e)
+            if cid is None:
+                step(f"Channel {ident} not added: {err}", "error")
+            elif not err:
+                added += 1
+        step(f"Added {added} channels from {CHANNELS_TXT.name}")
 
-    log = svc.progress.log
-    log(f"Migration import: backup in {backup.name}, {added} records added, "
-        f"{known} already known, {outside} outside the downloads folder, "
-        f"{channels_added} channels added", "ok")
-    for f in channels_failed:
-        log(f"Migration import: channel not added — {f}", "warn")
-    return {"backup": backup.name, "added": added, "known": known, "outside": outside,
-            "channels_added": channels_added, "channels_failed": channels_failed}
+    svc.library.set_created()
+    step(f"Database ready: {DB_PATH}")
+    return {"ok": not any(s["level"] == "error" for s in steps), "steps": steps}
 
 
-# ─── step 2: old folders report ─────────────────────────────────
+# ─── step 2: old folders ────────────────────────────────────────
+def old_folder_names(library) -> list:
+    """Top folders in DOWNLOADS_DIR that are not a channel id folder."""
+    if not DOWNLOADS_DIR.is_dir():
+        return []
+    channel_ids = set(library.channel_titles())
+    return sorted(d.name for d in DOWNLOADS_DIR.iterdir()
+                  if d.is_dir() and not d.name.startswith(".") and d.name not in channel_ids)
+
+
 def _files(folder: Path) -> list:
-    return sorted(f for f in folder.rglob("*") if f.is_file() and not f.name.startswith("."))
-
-
-def _legacy_by_path(library) -> dict:
-    out = {}
-    for r in library.legacy_files():
-        if r["status"] == "downloaded":
-            out.setdefault(r["path"], []).append(r)
-    return out
+    return sorted(f for f in folder.rglob("*") if f.is_file() and f.name not in JUNK)
 
 
 def old_folders(svc) -> list:
-    if not DOWNLOADS_DIR.is_dir():
-        return []
-    new_layout = set(svc.library.channel_titles())
-    legacy = _legacy_by_path(svc.library)
     out = []
-    for d in sorted(DOWNLOADS_DIR.iterdir()):
-        if not d.is_dir() or d.name.startswith(".") or d.name in new_layout:
-            continue
-        files = _files(d)
-        tracked = sum(1 for f in files if f.relative_to(DOWNLOADS_DIR).as_posix() in legacy)
+    for name in old_folder_names(svc.library):
+        files = _files(DOWNLOADS_DIR / name)
         match = next((c["id"] for c in svc.channels
-                      if safe_filename(c["title"] or f"channel_{c['id']}") == d.name), None)
-        out.append({
-            "folder": d.name,
-            "files": len(files),
-            "size": sum(f.stat().st_size for f in files),
-            "tracked": tracked,
-            "untracked": len(files) - tracked,
-            "channel_id": match,
-        })
+                      if safe_filename(c["title"] or f"channel_{c['id']}") == name), None)
+        out.append({"folder": name, "files": len(files),
+                    "size": sum(f.stat().st_size for f in files), "channel_id": match})
     return out
 
 
-# ─── step 3: preview / run one folder ───────────────────────────
-async def _fetch_messages(client, entity, ids) -> dict:
+# ─── step 3: plan one folder ────────────────────────────────────
+async def _get_by_ids(client, entity, ids) -> dict:
     out = {}
     for i in range(0, len(ids), 100):
         chunk = ids[i:i + 100]
@@ -148,43 +173,128 @@ async def _fetch_messages(client, entity, ids) -> dict:
     return out
 
 
+async def _all_media(client, entity) -> list:
+    seen, out = set(), []
+    for flt in (InputMessagesFilterPhotoVideo(), InputMessagesFilterDocument()):
+        async for m in client.iter_messages(entity, filter=flt):
+            if m.id not in seen:
+                seen.add(m.id)
+                out.append(m)
+    return out
+
+
+def _channel_media(svc, channel) -> list:
+    hit = _msg_cache.get(channel["id"])
+    if hit and time.time() - hit[0] < _MSG_CACHE_SECONDS:
+        return hit[1]
+    msgs = svc._submit(_all_media(svc._client, channel["entity"])).result(timeout=900)
+    _msg_cache[channel["id"]] = (time.time(), msgs)
+    return msgs
+
+
+def _old_name(m) -> str:
+    """The name the old downloader gave this message's file (before any _1, _2 suffix)."""
+    ext = guess_extension(m)
+    return safe_filename(m.text.strip(), ext) if m.text else f"{m.id}{ext}"
+
+
+def _match_by_name(f: Path, by_name: dict, used: set):
+    size = f.stat().st_size
+    exact = [m for m in by_name.get(f.name, []) if m.id not in used]
+    cands = exact
+    if not cands:
+        hit = re.fullmatch(r"(.*)_\d+", f.stem)
+        if hit:
+            prefix = hit.group(1)
+            cands = [m for name, ms in by_name.items()
+                     if Path(name).suffix == f.suffix and Path(name).stem.startswith(prefix)
+                     for m in ms if m.id not in used]
+    sized = [m for m in cands if m.file and m.file.size == size]
+    if sized:
+        return min(sized, key=lambda m: m.id)
+    # Photo sizes reported by Telegram can differ a little from the saved file.
+    if len(exact) == 1 and exact[0].photo:
+        return exact[0]
+    return None
+
+
 def _plan(svc, folder: str, channel_id: int):
-    d = DOWNLOADS_DIR / folder
-    if "/" in folder or "\\" in folder or folder.startswith(".") or not d.is_dir():
-        raise MigrationError(f"Unknown folder: {folder}")
+    if not svc.library.is_created():
+        raise MigrationError("Create the database first")
+    root = DOWNLOADS_DIR / folder
+    if "/" in folder or "\\" in folder or folder.startswith(".") or not root.is_dir():
+        raise MigrationError(f"Folder not found: {folder}")
+    if folder in svc.library.channel_titles():
+        raise MigrationError(f"{folder} is already a new-layout folder")
     channel = next((c for c in svc.channels if c["id"] == channel_id), None)
     if not channel:
-        raise MigrationError("Pick a channel from the list")
+        raise MigrationError("Pick the channel this folder belongs to")
 
-    legacy = _legacy_by_path(svc.library)
-    files = _files(d)
+    lib = svc.library
+    legacy = {}
+    for r in lib.legacy_files():
+        if r["status"] == "downloaded":
+            legacy.setdefault(r["path"], []).append(r)
+
+    files = _files(root)
     ids = sorted({r["message_id"] for f in files
                   for r in legacy.get(f.relative_to(DOWNLOADS_DIR).as_posix(), []) if r["message_id"]})
-    msgs = svc._submit(_fetch_messages(svc._client, channel["entity"], ids)).result(
-        timeout=60 + len(ids) // 10)
+    by_id = svc._submit(_get_by_ids(svc._client, channel["entity"], ids)).result(
+        timeout=60 + len(ids) // 10) if ids else {}
 
-    actions, taken = [], set()
+    by_name = None
+    used, taken, actions = set(), {}, []
     for f in files:
         rel = f.relative_to(DOWNLOADS_DIR).as_posix()
-        rows = legacy.get(rel)
-        if not rows:
-            actions.append({"old": rel, "new": None, "why": "no record in the old state"})
-            continue
-        hit = next(((r, msgs[r["message_id"]]) for r in rows
-                    if r["message_id"] in msgs and get_media_key(msgs[r["message_id"]]) == r["media_key"]),
-                   None)
-        if not hit:
-            gone = all(r["message_id"] not in msgs for r in rows)
-            actions.append({"old": rel, "new": None,
-                            "why": "message is gone from Telegram" if gone else "message media changed"})
-            continue
-        row, msg = hit
-        new = media_rel_path(channel_id, msg, f.suffix)
-        if new in taken or (DOWNLOADS_DIR / new).exists():
-            actions.append({"old": rel, "new": None, "why": f"{new} already exists"})
-            continue
-        taken.add(new)
-        actions.append({"old": rel, "new": new, "why": "", "_msg": msg, "_sha": row["sha256"]})
+        msg, how = None, ""
+        for r in legacy.get(rel, []):
+            m = by_id.get(r["message_id"])
+            if m and m.id not in used and get_media_key(m) == r["media_key"]:
+                msg, how = m, "matched by old record"
+                break
+        if not msg:
+            if by_name is None:
+                by_name = {}
+                for m in _channel_media(svc, channel):
+                    by_name.setdefault(_old_name(m), []).append(m)
+            msg = _match_by_name(f, by_name, used)
+            how = "matched by name and size" if msg else ""
+
+        a = {"old": rel, "new": None, "result": "", "note": how, "_msg": msg, "_sha": None}
+        if msg:
+            used.add(msg.id)
+            new = media_rel_path(channel_id, msg, f.suffix)
+            row = lib.get_file(get_media_key(msg))
+            if row and row["channel_id"] is not None and row["path"] != rel \
+                    and (DOWNLOADS_DIR / row["path"]).is_file():
+                a["_sha"] = hash_file(f)
+                kept_sha = row["sha256"] or hash_file(DOWNLOADS_DIR / row["path"])
+                if a["_sha"] == kept_sha:
+                    a.update(new=row["path"], result="copy",
+                             note="already downloaded in the new layout — old copy removed")
+                    actions.append(a)
+                    continue
+                msg = None
+                a["note"] = "message already has a different file in the new layout"
+            elif new in taken or (DOWNLOADS_DIR / new).exists():
+                msg = None
+                a["note"] = f"new name {new} is already used"
+            else:
+                a.update(new=new, result="rename")
+                taken[new] = None
+                actions.append(a)
+                continue
+
+        a["_msg"] = None
+        a["_sha"] = a["_sha"] or hash_file(f)
+        new = f"{channel_id}/unmatched/{a['_sha'][:16]}{f.suffix}"
+        a["note"] = a["note"] or "no matching Telegram message"
+        if new in taken or (DOWNLOADS_DIR / new).is_file():
+            a.update(new=new, result="copy", note="same content as another file — old copy removed")
+        else:
+            a.update(new=new, result="unmatched")
+            taken[new] = None
+        actions.append(a)
     return channel, actions
 
 
@@ -192,38 +302,88 @@ def _public(actions) -> list:
     return [{k: v for k, v in a.items() if not k.startswith("_")} for a in actions]
 
 
+def _summary(actions) -> dict:
+    count = lambda r: sum(1 for a in actions if a["result"] == r)  # noqa: E731
+    return {"renamed": count("rename"), "unmatched": count("unmatched"),
+            "copies": count("copy"), "errors": count("error"), "total": len(actions)}
+
+
 def preview(svc, folder: str, channel_id: int) -> dict:
+    _guard(svc)
     with svc._lock:
-        _guard(svc)
         _, actions = _plan(svc, folder, channel_id)
-    return {"actions": _public(actions)}
+    return {"summary": _summary(actions), "actions": _public(actions)}
+
+
+# ─── step 4: run + verify one folder ────────────────────────────
+def _apply(lib, channel_id, a) -> None:
+    src, dst = DOWNLOADS_DIR / a["old"], DOWNLOADS_DIR / a["new"]
+    if a["result"] == "copy":
+        src.unlink()
+        lib.repoint_legacy(a["old"], a["new"], channel_id)
+        return
+    sha = a["_sha"] or hash_file(src)
+    size = src.stat().st_size
+    if dst.exists():
+        raise OSError(f"{a['new']} already exists")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(src, dst)
+    a["_sha"], a["_size"] = sha, size
+    msg = a["_msg"]
+    if msg:
+        a["_key"] = get_media_key(msg)
+        lib.save_file(a["_key"], channel_id, msg.id, a["new"], media_folder(msg),
+                      msg.file.mime_type if msg.file else None, size, sha,
+                      msg.message or None, msg.date.isoformat() if msg.date else None)
+    else:
+        mime = mimetypes.guess_type(dst.name)[0] or ""
+        a["_key"] = f"file:{sha}"
+        lib.save_file(a["_key"], channel_id, None, a["new"], folder_for_mime(mime),
+                      mime or None, size, sha, None, None)
+    lib.repoint_legacy(a["old"], a["new"], channel_id)
+
+
+def _verify(lib, channel_id, a) -> str:
+    """Empty string when the file is where the DB says, else what is wrong."""
+    if a["result"] == "error":
+        return a["note"]
+    if (DOWNLOADS_DIR / a["old"]).exists():
+        return "old file still there"
+    dst = DOWNLOADS_DIR / a["new"]
+    if not dst.is_file():
+        return "new file missing"
+    if a["result"] == "copy":
+        return ""
+    if dst.stat().st_size != a["_size"]:
+        return "size changed during the move"
+    row = lib.get_file(a["_key"])
+    if not row or row["path"] != a["new"] or row["channel_id"] != channel_id \
+            or row["status"] != "downloaded":
+        return "database record does not point at the new file"
+    return ""
 
 
 def run(svc, folder: str, channel_id: int) -> dict:
-    log = svc.progress.log
+    _guard(svc)
+    lib = svc.library
     with svc._lock:
-        _guard(svc)
         channel, actions = _plan(svc, folder, channel_id)
-        lib = svc.library
         lib.save_channel(channel["id"], channel["title"], channel["username"])
-        moved = 0
         for a in actions:
-            if not a["new"]:
-                continue
-            src, dst, msg = DOWNLOADS_DIR / a["old"], DOWNLOADS_DIR / a["new"], a["_msg"]
             try:
-                sha = a["_sha"] or hash_file(src)
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(src, dst)
-            except OSError as e:
-                a.update(new=None, why=f"move failed: {e}")
-                continue
-            lib.move_file(a["old"], a["new"], channel_id, media_folder(msg), sha,
-                          msg.message or None, msg.date.isoformat() if msg.date else None)
-            moved += 1
-        lib.claim_deleted(folder, channel_id)
+                _apply(lib, channel_id, a)
+            except Exception as e:
+                a.update(result="error", note=f"{a['note']} — failed: {e}")
 
         root = DOWNLOADS_DIR / folder
+        lib.claim_deleted(folder, channel_id)
+        stale = [r["media_key"] for r in lib.legacy_files()
+                 if r["status"] == "downloaded" and r["path"].startswith(folder + "/")
+                 and not (DOWNLOADS_DIR / r["path"]).exists()]
+        lib.forget(stale)
+        for junk in root.rglob("*"):
+            if junk.is_file() and junk.name in JUNK:
+                junk.unlink()
         for p in sorted(root.rglob("*"), reverse=True):
             if p.is_dir():
                 try:
@@ -235,6 +395,24 @@ def run(svc, folder: str, channel_id: int) -> dict:
         except OSError:
             pass
 
-    stayed = len(actions) - moved
-    log(f"Migration: {folder} → {channel_id}: {moved} moved, {stayed} stayed", "ok" if not stayed else "warn")
-    return {"moved": moved, "stayed": stayed, "actions": _public(actions)}
+        problems = []
+        for a in actions:
+            a["check"] = _verify(lib, channel_id, a)
+            if a["check"]:
+                problems.append(a)
+        folder_gone = not root.exists()
+        summary = _summary(actions)
+        summary.update(checked=len(actions), check_failed=len(problems), folder_removed=folder_gone,
+                       forgotten=len(stale))
+        verified = not problems and folder_gone
+        report = {"folder": folder, "channel_id": channel_id, "channel": channel["title"],
+                  "verified": verified, "summary": summary, "actions": _public(actions)}
+        lib.save_migration(folder, channel_id, summary["renamed"], summary["unmatched"],
+                           summary["copies"], summary["errors"], verified, json.dumps(report))
+
+    svc.progress.log(
+        f"Migration {folder} → {channel_id}: {summary['renamed']} renamed, "
+        f"{summary['unmatched']} unmatched, {summary['copies']} copies removed, "
+        f"{summary['errors']} errors — {'verified OK' if verified else 'CHECK FAILED'}",
+        "ok" if verified else "error")
+    return report

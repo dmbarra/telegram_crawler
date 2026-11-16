@@ -51,7 +51,6 @@
     </select>
     <input type="search" name="q" placeholder="Search name or caption…" value="{{ query }}">
     <button type="submit" class="btn">Go</button>
-    <a href="?refresh=1" class="btn" title="Rescan downloads folder">↻ Rescan</a>
   </form>
   <div class="stats">
     {% if total %}{{ first_index }}–{{ first_index + files|length - 1 }} of {% endif %}{{ total }}
@@ -71,23 +70,23 @@
       {% set src = "/media?p=" ~ (f.rel|urlencode) %}
       {% if f.type == "image" %}
         <div class="tile" data-src="{{ src }}" data-type="image"
-             data-name="{{ f.name }}" data-size="{{ f.size_str }}">
+             data-name="{{ f.label }}" data-size="{{ f.size_str }}">
           <img src="{{ src }}" loading="lazy" decoding="async" alt="">
-          <div class="label">{{ f.name }}</div>
+          <div class="label" title="{{ f.name }}">{{ f.label }}</div>
         </div>
       {% elif f.type == "video" %}
         <div class="tile video" data-src="{{ src }}" data-type="video"
-             data-name="{{ f.name }}" data-size="{{ f.size_str }}">
+             data-name="{{ f.label }}" data-size="{{ f.size_str }}">
           <img class="thumb" src="/thumb?p={{ f.rel|urlencode }}"
                loading="lazy" decoding="async" alt=""
                onerror="this.remove()">
           <div class="play-badge">▶</div>
-          <div class="label">{{ f.name }}</div>
+          <div class="label" title="{{ f.name }}">{{ f.label }}</div>
         </div>
       {% else %}
         <div class="tile audio" data-src="{{ src }}" data-type="audio"
-             data-name="{{ f.name }}" data-size="{{ f.size_str }}">
-          <div class="label">{{ f.name }}</div>
+             data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+          <div class="label" title="{{ f.name }}">{{ f.label }}</div>
         </div>
       {% endif %}
     {% endfor %}

@@ -13,7 +13,6 @@
       {% endfor %}
     </select>
     <button type="submit" class="btn">Go</button>
-    <a href="?refresh=1" class="btn" title="Rescan downloads folder">↻ Rescan</a>
   </form>
   <a href="/duplicates" class="btn">Duplicates</a>
   <div class="stats">
@@ -22,10 +21,14 @@
 </header>
 
 <main id="main">
+  {% if old_folders %}
+    <div class="notice">{{ old_folders }} old folder{% if old_folders != 1 %}s are{% else %} is{% endif %} not migrated yet,
+      so {% if old_folders != 1 %}their{% else %}its{% endif %} files are not listed here. <a href="/migrate">Open Migrate</a></div>
+  {% endif %}
   {% if not cards %}
     <div class="empty">
       {% if total_channels == 0 %}
-        No media found in <code>downloads/</code>. Use <a href="/download">Download</a> first.
+        No media in the database yet. Use <a href="/download">Download</a> first.
       {% else %}
         No channels match "{{ query }}".
       {% endif %}
@@ -34,7 +37,7 @@
 
   <div class="ch-cards">
     {% for c in cards %}
-      <a class="ch-card" href="{{ url_for('viewer.channel_page', channel=c.name) }}">
+      <a class="ch-card" href="{{ url_for('viewer.channel_page', channel=c.id) }}">
         <div class="cover">
           {% if c.cover and c.cover.type == "image" %}
             <img src="/media?p={{ c.cover.rel|urlencode }}" loading="lazy" decoding="async" alt="">

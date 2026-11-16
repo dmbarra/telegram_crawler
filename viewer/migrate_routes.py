@@ -1,8 +1,9 @@
-"""Migration page: move old title folders to the new layout, one folder at a time.
+"""Migration page: create the database, then move old folders one at a time.
 
 Temporary — see src/migrate.py for how to remove it.
 """
 import concurrent.futures
+import json
 
 from flask import Blueprint, abort, current_app, jsonify, render_template
 
@@ -23,9 +24,9 @@ def _api(fn):
     except migrate.MigrationError as e:
         return jsonify(error=str(e)), 409
     except concurrent.futures.TimeoutError:
-        return jsonify(error="Telegram did not answer in time. Try again."), 504
-    except Exception as e:  # Telegram errors (RPCError and friends)
-        return jsonify(error=f"Error: {e}"), 502
+        return jsonify(error="Telegram did not answer in time. Nothing was changed. Try again."), 504
+    except Exception as e:  # Telegram errors (RPCError and friends), disk errors
+        return jsonify(error=f"{type(e).__name__}: {e}"), 502
 
 
 def _target():
@@ -36,39 +37,57 @@ def _target():
     try:
         channel_id = int(body.get("channel_id"))
     except (TypeError, ValueError):
-        abort(400)
+        return None, None
     return folder, channel_id
+
+
+def _need_channel():
+    return jsonify(error="Pick the channel this folder belongs to"), 409
 
 
 @bp.route("/migrate")
 def migrate_page():
     tg = _tg()
-    folders = migrate.old_folders(tg)
+    created = tg.library.is_created()
+    folders = migrate.old_folders(tg) if created else []
     for f in folders:
         f["size_str"] = fmt_size(f["size"])
     return render_template(
         "migrate.html",
-        folders=folders,
-        channels=sorted(tg.channels, key=lambda c: (c["title"] or "").lower()),
+        created=created,
         ready=tg.status == "ready",
-        has_old_files=any(p.exists() for p in (migrate.STATE_PATH, migrate.HASHES_PATH,
-                                               migrate.CHANNELS_TXT)),
+        tg_error=tg.error,
+        folders=folders,
+        done=tg.library.migrations() if created else [],
+        channels=sorted(tg.channels, key=lambda c: (c["title"] or "").lower()),
     )
 
 
-@bp.post("/api/migrate/import")
-def import_old():
+@bp.post("/api/migrate/create")
+def create():
     _json_body()
-    return _api(lambda: migrate.backup_and_import(_tg()))
+    return _api(lambda: migrate.create_database(_tg()))
 
 
 @bp.post("/api/migrate/preview")
 def preview():
     folder, channel_id = _target()
+    if channel_id is None:
+        return _need_channel()
     return _api(lambda: migrate.preview(_tg(), folder, channel_id))
 
 
 @bp.post("/api/migrate/run")
 def run():
     folder, channel_id = _target()
+    if channel_id is None:
+        return _need_channel()
     return _api(lambda: migrate.run(_tg(), folder, channel_id))
+
+
+@bp.route("/api/migrate/report/<int:migration_id>")
+def report(migration_id):
+    raw = _tg().library.migration_report(migration_id)
+    if raw is None:
+        abort(404)
+    return jsonify(json.loads(raw))

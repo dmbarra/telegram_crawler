@@ -5,7 +5,6 @@ the loop thread. Only one download job runs at a time.
 """
 import asyncio
 import atexit
-import shutil
 import sys
 import threading
 import time
@@ -151,6 +150,8 @@ class TelegramService:
             return "Files at the same time must be 1 to 20"
         if max_messages < 0:
             return "Max messages must be 0 or more"
+        if not self.library.is_created():
+            return "Create the database first: open the Migrate page and press Create database"
         with self._lock:
             if self.status != "ready":
                 return "Telegram is not connected"
@@ -197,41 +198,48 @@ class TelegramService:
             self._on_job_done()
         return {"removed": removed, "freed": freed}, None
 
-    def delete_paths(self, rels):
-        """Delete files/folders under DOWNLOADS_DIR. History marks them deleted so they are not downloaded again.
+    def delete_files(self, paths=(), channel_ids=()):
+        """Delete files the library knows (by path, or every file of the given channels).
+        The records are kept as deleted, so the files are not downloaded again.
         Returns (summary dict, None) or (None, error message)."""
         root = DOWNLOADS_DIR.resolve()
-        targets = []
-        for rel in rels:
-            path = DOWNLOADS_DIR / rel
-            try:
-                resolved = path.resolve()
-                resolved.relative_to(root)
-            except (ValueError, OSError):
-                return None, f"Not allowed: {rel}"
-            if resolved == root:
-                return None, "Cannot delete the downloads folder itself"
-            targets.append(path)
-
         with self._lock:
             if self.progress.running:
                 return None, "Wait until the download finishes"
+            wanted = set(paths) | set(self.library.channel_paths(channel_ids) if channel_ids else [])
+            known = self.library.known_paths(wanted)
             removed = freed = 0
-            gone = set()
-            for path in targets:
-                files = [f for f in path.rglob("*") if f.is_file()] if path.is_dir() else [path]
-                try:
-                    sizes = sum(f.stat().st_size for f in files)
-                    shutil.rmtree(path) if path.is_dir() else path.unlink()
-                except OSError:
+            gone, failed = [], []
+            for rel in sorted(wanted):
+                if rel not in known:
+                    failed.append(f"{rel}: not in the database")
                     continue
-                removed += len(files)
-                freed += sizes
-                gone.update(f.relative_to(DOWNLOADS_DIR).as_posix() for f in files)
+                path = DOWNLOADS_DIR / rel
+                try:
+                    path.resolve().relative_to(root)
+                except (ValueError, OSError):
+                    failed.append(f"{rel}: outside the downloads folder")
+                    continue
+                try:
+                    size = path.stat().st_size if path.is_file() else 0
+                    path.unlink(missing_ok=True)
+                except OSError as e:
+                    failed.append(f"{rel}: {e}")
+                    continue
+                gone.append(rel)
+                removed += 1
+                freed += size
+                for parent in path.parents:
+                    if parent.resolve() == root:
+                        break
+                    try:
+                        parent.rmdir()
+                    except OSError:
+                        break
             self.library.mark_deleted(gone)
         if self._on_job_done:
             self._on_job_done()
-        return {"removed": removed, "freed": freed}, None
+        return {"removed": removed, "freed": freed, "failed": failed}, None
 
     def snapshot(self, since: int = 0) -> dict:
         return {
