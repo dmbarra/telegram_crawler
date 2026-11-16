@@ -2,7 +2,7 @@
 import math
 import mimetypes
 from flask import (
-    Blueprint, abort, make_response, render_template, request,
+    Blueprint, abort, current_app, make_response, render_template, request,
     send_file, send_from_directory,
 )
 from viewer import config
@@ -23,6 +23,10 @@ def _normalize_sort(raw: str) -> str:
     return raw if raw in SORT_OPTIONS else DEFAULT_SORT
 
 
+def _library():
+    return current_app.extensions["telegram"].library
+
+
 def _per_page() -> int:
     for raw in (request.args.get("per"), request.cookies.get("per_page")):
         try:
@@ -36,14 +40,15 @@ def _per_page() -> int:
 # ─── GET /viewer — channel index ────────────────────────────────
 @bp.route("/viewer")
 def index():
-    data = scan_media(force=request.args.get("refresh") == "1")
+    data = scan_media(_library(), force=request.args.get("refresh") == "1")
+    titles = _library().channel_titles()
     q = request.args.get("q", "").strip().lower()
     sort_key = request.args.get("sort", DEFAULT_CHANNEL_SORT)
     if sort_key not in CHANNEL_SORTS:
         sort_key = DEFAULT_CHANNEL_SORT
 
-    cards = [channel_summary(name, files) for name, files in data.items()
-             if not q or q in name.lower()]
+    cards = [channel_summary(name, titles.get(name, name), files) for name, files in data.items()]
+    cards = [c for c in cards if not q or q in c["title"].lower()]
     return render_template(
         "index.html",
         cards=sort_channels(cards, sort_key),
@@ -58,7 +63,7 @@ def index():
 # ─── GET /viewer/<channel> — one channel, paged ─────────────────
 @bp.route("/viewer/<channel>")
 def channel_page(channel):
-    data = scan_media(force=request.args.get("refresh") == "1")
+    data = scan_media(_library(), force=request.args.get("refresh") == "1")
     if channel not in data:
         abort(404)
 
@@ -80,6 +85,7 @@ def channel_page(channel):
     resp = make_response(render_template(
         "channel.html",
         channel=channel,
+        channel_title=_library().channel_titles().get(channel, channel),
         files=files[(page - 1) * per: page * per],
         total=len(files),
         channel_total=len(data[channel]),

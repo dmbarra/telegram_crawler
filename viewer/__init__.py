@@ -8,6 +8,7 @@ from viewer.routes import bp
 from viewer.download_routes import bp as download_bp
 from viewer.discover_routes import bp as discover_bp
 from viewer.files_routes import bp as files_bp
+from viewer.migrate_routes import bp as migrate_bp
 
 
 def create_app(telegram) -> Flask:
@@ -52,4 +53,5 @@ def create_app(telegram) -> Flask:
     app.register_blueprint(download_bp)
     app.register_blueprint(discover_bp)
     app.register_blueprint(files_bp)
+    app.register_blueprint(migrate_bp)
     return app

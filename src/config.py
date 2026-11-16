@@ -25,13 +25,11 @@ def _folder(name: str, default: str) -> Path:
 
 # Where downloaded media is saved
 DOWNLOADS_DIR = _folder("DOWNLOADS_DIR", "downloads")
-# Where the app keeps its own files: session, dedup state, channels.txt, thumbnails
+# Where the app keeps its own files: session, library.db, thumbnails
 DATA_DIR = _folder("DATA_DIR", ".")
 
-STATE_PATH = DATA_DIR / "download_state.json"
-CHANNELS_TXT_PATH = DATA_DIR / "channels.txt"
+DB_PATH = DATA_DIR / "library.db"
 THUMB_CACHE_DIR = DATA_DIR / ".thumb_cache"
-HASH_INDEX_PATH = DATA_DIR / "file_hashes.json"
 JOIN_LOG_PATH = DATA_DIR / "join_log.json"
 INVITES_PATH = DATA_DIR / "invites.json"
 
@@ -50,7 +48,7 @@ JOIN_DAILY_LIMIT = int(os.getenv("JOIN_DAILY_LIMIT") or "20")
 JOIN_MIN_INTERVAL = int(os.getenv("JOIN_MIN_INTERVAL") or "60")
 
 # Read-only extras from .env: comma-separated @username / -100123 / https://t.me/foo.
-# Channels added in the web page go to channels.txt instead (see src/storage.py).
+# Channels added in the web page are saved in library.db instead.
 EXTRA_CHANNELS = [
     x.strip()
     for x in (os.getenv("EXTRA_CHANNELS", "") or "").split(",")

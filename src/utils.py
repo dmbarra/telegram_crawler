@@ -79,26 +79,29 @@ def get_media_key(message):
     return None
 
 
-def resolve_unique_path(directory: Path, filename: str) -> Path:
-    """Return a non-colliding path inside directory, reserved as an empty file.
+def media_folder(message) -> str:
+    """Type sub-folder for a message's media: videos, images, audio, pdf, zip or other."""
+    if message.photo:
+        return "images"
+    if message.video or message.gif:
+        return "videos"
+    if message.audio or message.voice:
+        return "audio"
+    mime = (message.document.mime_type or "") if message.document else ""
+    if mime.startswith("image/"):
+        return "images"
+    if mime.startswith("video/"):
+        return "videos"
+    if mime.startswith("audio/"):
+        return "audio"
+    if mime == "application/pdf":
+        return "pdf"
+    if mime == "application/zip":
+        return "zip"
+    return "other"
 
-    Reserving matters because a batch downloads in parallel: two files with
-    the same caption would otherwise both get the same free name.
-    Also re-truncates on collision so `_1`, `_2` suffixes never push the
-    filename past the OS limit.
-    """
-    directory.mkdir(parents=True, exist_ok=True)
-    stem, ext = os.path.splitext(filename)
-    candidate = filename
-    counter = 1
-    while True:
-        path = directory / candidate
-        try:
-            path.touch(exist_ok=False)
-            return path
-        except FileExistsError:
-            # Keep the stem within limits even after adding "_N"
-            suffix = f"_{counter}"
-            trimmed = stem[: _MAX_STEM_LEN - len(suffix)]
-            candidate = f"{trimmed}{suffix}{ext}"
-            counter += 1
+
+def media_rel_path(channel_id: int, message, ext: str) -> str:
+    """<channel_id>/<type>/<date>_<message_id><ext> — no titles or captions, so nothing leaks."""
+    date = message.date.strftime("%Y-%m-%d") if message.date else "0000-00-00"
+    return f"{channel_id}/{media_folder(message)}/{date}_{message.id}{ext}"

@@ -9,11 +9,13 @@ Open the home page. Each card is one page:
 
 - **Download** — pick channels, media type, batch size and message limit. Live progress and log.
   You can add channels you are not a member of (`@name`, `https://t.me/...`, or `-100...` id).
-- **Viewer** — browse media by channel. Paging, filter by type, search, sort. Video thumbnails (ffmpeg).
-- **Duplicates** — finds exact copies (same SHA-256) inside a group. Keeps the oldest, deletes the copies you tick.
+- **Viewer** — browse media by channel. Paging, filter by type, search by name or caption, sort. Video thumbnails (ffmpeg).
+- **Duplicates** — finds exact copies (same SHA-256) inside a channel. Keeps the oldest, deletes the copies you tick.
 - **Discover** — find new groups by keyword and join them. Safe limits: max joins per day and a wait between joins.
 - **Files Manager** — browse the downloads folder. See folder sizes and free disk space.
   Delete files or whole folders. Deleted files are remembered, so they are **not** downloaded again.
+- **Migrate** — temporary. Moves downloads from the old layout (folders named after the channel)
+  to the new one, one folder at a time. Preview first, then Run.
 - **Login** — optional HTTP Basic Auth for the whole site (`VIEWER_USER` + `VIEWER_PASS`).
 
 Delete actions are blocked while a download is running.
@@ -35,12 +37,13 @@ See `.env.example` for the full list.
 
 ## Where data lives
 
-- **Downloads folder** — one sub-folder per channel or group.
+- **Downloads folder** — `<channel id>/<type>/<date>_<message id>.<ext>`.
+  Types: `videos`, `images`, `audio`, `pdf`, `zip`, `other`.
+  Names hold no titles or captions; those live in `library.db`.
 - **Data folder** — the app's own files:
   - `<SESSION_NAME>.session` — Telegram login
-  - `download_state.json` — what was downloaded (and what you deleted)
-  - `file_hashes.json` — file fingerprints for the Duplicates page
-  - `channels.txt` — channels you added on the Download page
+  - `library.db` — SQLite: what was downloaded (and what you deleted), file fingerprints,
+    captions, channels you added on the Download page, and when you added or removed them
   - `join_log.json`, `invites.json` — Discover page history
   - `.thumb_cache/` — video thumbnails
 

@@ -5,8 +5,8 @@ Channels are returned as normalized dicts:
 
 fetch_channels() uses GetDialogsRequest(hash=0) to BYPASS Telethon's
 dialog cache — this is what fixes "menu shows fewer channels than app".
-Includes: main folder + archived folder + extra channels (channels.txt + .env).
-Extra channels carry `extra` (the identifier) and `extra_source` ("file" | "env").
+Includes: main folder + archived folder + extra channels (library.db + .env).
+Extra channels carry `extra` (the identifier) and `extra_source` ("file" = added on the page | "env").
 
 All messages go to a `log(msg, level)` callable; levels: info, ok, warn, error.
 """
@@ -20,8 +20,6 @@ from telethon.tl.types import (
     InputMessagesFilterPhotoVideo,
 )
 from src.config import EXTRA_CHANNELS
-from src.storage import load_extra_channels
-from src.utils import safe_filename
 from src.downloader import download_in_batches
 
 
@@ -91,7 +89,7 @@ def normalize_entity(entity, ident, source):
 
 
 # ─── fetch: server-side full list (bypasses cache) ─────────────
-async def fetch_channels(client, log):
+async def fetch_channels(client, log, saved_extras):
     """Fetch ALL channels/groups fresh from the server using hash=0.
 
     hash=0 tells Telegram: "pretend I have nothing cached, send the full list".
@@ -143,7 +141,7 @@ async def fetch_channels(client, log):
     # ── Merge extra channels ──
     by_id = {c["id"]: c for c in normalized}
     failed = []
-    extras = ([(i, "file") for i in load_extra_channels()]
+    extras = ([(i, "file") for i in saved_extras]
               + [(i, "env") for i in EXTRA_CHANNELS])
     for ident, source in extras:
         try:
@@ -212,7 +210,7 @@ async def _fetch_messages(client, entity, filter_type, mime, max_messages, log):
 
 # ─── run: one or more channels ──────────────────────────────────
 async def run_job(client, channels, filter_type, folder_name, mime,
-                  batch_size, max_messages, state, progress, hashes=None):
+                  batch_size, max_messages, library, progress):
     log = progress.log
     for i, ch in enumerate(channels, 1):
         title = ch["title"]
@@ -247,9 +245,6 @@ async def run_job(client, channels, filter_type, folder_name, mime,
             log("  ○ No matching media, skipping", "warn")
             continue
 
-        ch_folder = safe_filename(title or f"channel_{ch['id']}")
         log(f"  → downloading {len(msgs)} items")
-        d, s, e, dup = await download_in_batches(
-            msgs, f"{ch_folder}/{folder_name}", batch_size, state, title, progress, hashes
-        )
+        d, s, e, dup = await download_in_batches(msgs, ch, batch_size, library, progress)
         log(f"  Downloaded {d} | Skipped {s} | Duplicates {dup} | Errors {e}", "ok")
