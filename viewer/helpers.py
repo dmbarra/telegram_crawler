@@ -65,6 +65,7 @@ def file_item(row) -> dict:
         "size": row["size"] or 0,
         "size_str": fmt_size(row["size"] or 0),
         "date": (row["at"] or "")[:16].replace("T", " "),
+        "rating": row["rating"] or "",
     }
 
 

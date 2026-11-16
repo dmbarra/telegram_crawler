@@ -13,14 +13,11 @@
       {% endfor %}
     </select>
   </form>
+  <a href="/files/marked" class="btn{% if marked %} danger{% endif %}">To delete ({{ marked }}{% if marked %} · {{ marked_size }}{% endif %})</a>
   <div class="stats">{{ free_str }} free of {{ disk_str }}</div>
 </header>
 
 <main id="main">
-  {% if old_folders %}
-    <div class="notice">{{ old_folders }} old folder{% if old_folders != 1 %}s are{% else %} is{% endif %} not migrated yet,
-      so {% if old_folders != 1 %}their{% else %}its{% endif %} files are not listed here. <a href="/migrate">Open Migrate</a></div>
-  {% endif %}
 
   <div class="row">
     <button class="btn danger" id="fm-delete" disabled>Delete selected</button>

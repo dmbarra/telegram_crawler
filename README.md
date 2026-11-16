@@ -9,14 +9,14 @@ Open the home page. Each card is one page:
 
 - **Download** — pick channels, media type, batch size and message limit. Live progress and log.
   You can add channels you are not a member of (`@name`, `https://t.me/...`, or `-100...` id).
-- **Viewer** — browse media by channel, from the database. Paging, filter by type, search by name or caption, sort. Video thumbnails (ffmpeg).
+- **Viewer** — browse media by channel, from the database. Paging, filter by type and rating, search by name or caption, sort. Video thumbnails (ffmpeg).
+  In the full-screen view: swipe or use the arrows to move. Rate each file Good, Not good or To delete
+  (buttons, or keys `1` `2` `3`). Ratings are saved in the database.
 - **Duplicates** — finds exact copies (same SHA-256) inside a channel. Keeps the oldest, deletes the copies you tick.
 - **Discover** — find new groups by keyword and join them. Safe limits: max joins per day and a wait between joins.
 - **Files Manager** — channels and files from the database, with sizes and free disk space.
   Delete files or whole channels. Deleted files are remembered, so they are **not** downloaded again.
-- **Migrate** — temporary. Step 1: create the database (downloads stay locked until then).
-  Step 2: move each old folder (named after the channel) to the new layout. Preview, Run, then every
-  file is checked and a report is saved. Files that match no Telegram message go to `unmatched/`.
+  The **To delete** page lists every file rated To delete and removes them all with one button.
 - **Login** — optional HTTP Basic Auth for the whole site (`VIEWER_USER` + `VIEWER_PASS`).
 
 Delete actions are blocked while a download is running.
@@ -39,13 +39,12 @@ See `.env.example` for the full list.
 ## Where data lives
 
 - **Downloads folder** — `<channel id>/<type>/<date>_<message id>.<ext>`.
-  Types: `videos`, `images`, `audio`, `pdf`, `zip`, `other`, plus `unmatched` for migrated files
-  with no Telegram message (named `<hash>.<ext>`).
+  Types: `videos`, `images`, `audio`, `pdf`, `zip`, `other`.
   Names hold no titles or captions; those live in `library.db`.
 - **Data folder** — the app's own files:
   - `<SESSION_NAME>.session` — Telegram login
   - `library.db` — SQLite: what was downloaded (and what you deleted), file fingerprints,
-    captions, channels you added on the Download page, and when you added or removed them
+    captions, ratings, channels you added on the Download page, and when you added or removed them
   - `join_log.json`, `invites.json` — Discover page history
   - `.thumb_cache/` — video thumbnails
 

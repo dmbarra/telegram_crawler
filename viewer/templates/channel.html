@@ -39,6 +39,11 @@
       <option value="video" {% if current_type == "video" %}selected{% endif %}>Videos</option>
       <option value="audio" {% if current_type == "audio" %}selected{% endif %}>Audio</option>
     </select>
+    <select name="rating" onchange="this.form.submit()">
+      {% for key, label in rating_options.items() %}
+        <option value="{{ key }}" {% if key == current_rating %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
     <select name="sort" onchange="this.form.submit()">
       {% for key, label in sort_options.items() %}
         <option value="{{ key }}" {% if key == current_sort %}selected{% endif %}>{{ label }}</option>
@@ -69,14 +74,16 @@
     {% for f in files %}
       {% set src = "/media?p=" ~ (f.rel|urlencode) %}
       {% if f.type == "image" %}
-        <div class="tile" data-src="{{ src }}" data-type="image"
-             data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+        <div class="tile" data-src="{{ src }}" data-type="image" data-rel="{{ f.rel }}"
+             data-rating="{{ f.rating }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+          <span class="rate-badge"></span>
           <img src="{{ src }}" loading="lazy" decoding="async" alt="">
           <div class="label" title="{{ f.name }}">{{ f.label }}</div>
         </div>
       {% elif f.type == "video" %}
-        <div class="tile video" data-src="{{ src }}" data-type="video"
-             data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+        <div class="tile video" data-src="{{ src }}" data-type="video" data-rel="{{ f.rel }}"
+             data-rating="{{ f.rating }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+          <span class="rate-badge"></span>
           <img class="thumb" src="/thumb?p={{ f.rel|urlencode }}"
                loading="lazy" decoding="async" alt=""
                onerror="this.remove()">
@@ -84,8 +91,9 @@
           <div class="label" title="{{ f.name }}">{{ f.label }}</div>
         </div>
       {% else %}
-        <div class="tile audio" data-src="{{ src }}" data-type="audio"
-             data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+        <div class="tile audio" data-src="{{ src }}" data-type="audio" data-rel="{{ f.rel }}"
+             data-rating="{{ f.rating }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+          <span class="rate-badge"></span>
           <div class="label" title="{{ f.name }}">{{ f.label }}</div>
         </div>
       {% endif %}
@@ -101,6 +109,21 @@
   <button class="nav next" onclick="navLb(1)" title="Next (→)">›</button>
   <div class="media" id="lb-media"></div>
   <div class="info" id="lb-info"></div>
+  <div class="rate-bar">
+    <button class="rate good" data-rating="good" title="Good (1)">
+      <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+      <span>Good</span>
+    </button>
+    <button class="rate bad" data-rating="bad" title="Not good (2)">
+      <svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
+      <span>Not good</span>
+    </button>
+    <button class="rate delete" data-rating="delete" title="To delete (3)">
+      <svg viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      <span>To delete</span>
+    </button>
+  </div>
+  <div class="rate-msg" id="lb-rate-msg"></div>
 </div>
 {% endblock %}
 

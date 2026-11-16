@@ -5,7 +5,6 @@ import shutil
 from flask import Blueprint, abort, current_app, jsonify, render_template, request
 
 from src.config import DOWNLOADS_DIR
-from src.migrate import old_folder_names
 from viewer.download_routes import _json_body
 from viewer.helpers import card, file_item, fmt_size, page_window
 
@@ -25,8 +24,9 @@ def files_page():
     lib = _library()
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
     disk = shutil.disk_usage(DOWNLOADS_DIR)
+    marked = lib.marked_summary()
     common = {"free_str": fmt_size(disk.free), "disk_str": fmt_size(disk.total),
-              "old_folders": len(old_folder_names(lib))}
+              "marked": marked["count"], "marked_size": fmt_size(marked["size"])}
 
     channel = request.args.get("c", type=int)
     if channel is None:
@@ -61,10 +61,27 @@ def files_page():
         window=page_window(page, pages), current_sort=sort_key, sort_options=FILE_SORTS, **common)
 
 
+@bp.route("/files/marked")
+def marked_page():
+    lib = _library()
+    marked = lib.marked_summary()
+    entries = []
+    for r in lib.marked_files():
+        item = file_item(r)
+        item["channel_title"] = r["title"]
+        entries.append(item)
+    return render_template("marked.html", entries=entries, count=marked["count"],
+                           size_str=fmt_size(marked["size"]))
+
+
 @bp.post("/api/files/delete")
 def delete_files():
     body = _json_body()
     paths = body.get("paths") or []
+    if body.get("marked") is True:
+        paths = [r["path"] for r in _library().marked_files()]
+        if not paths:
+            return jsonify(error="No files are marked to delete"), 409
     channels = body.get("channels") or []
     if not isinstance(paths, list) or not all(isinstance(p, str) and p for p in paths):
         abort(400)
