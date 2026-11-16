@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}To delete · Files Manager{% endblock %}
+
+{% block body %}
+<header>
+  <a href="/files" class="btn">← Files Manager</a>
+  <h1>To delete</h1>
+  <div class="stats">{{ count }} file{% if count != 1 %}s{% endif %} · {{ size_str }}</div>
+</header>
+
+<main id="main">
+  <div class="row">
+    <button class="btn danger" id="mk-delete" {% if not count %}disabled{% endif %}>
+      Delete all marked ({{ count }} file{% if count != 1 %}s{% endif %}, {{ size_str }})</button>
+    <span class="msg" id="mk-msg">Mark files with the trash button in the Viewer. Deleted files are never downloaded again.</span>
+  </div>
+  <ul class="fm-failed error" id="mk-failed"></ul>
+
+  {% if not entries %}
+    <div class="empty">No files are marked to delete. Use the <a href="/viewer">Viewer</a> to mark some.</div>
+  {% endif %}
+
+  <div class="grid" style="--tile-size: 200px;">
+    {% for f in entries %}
+      <a class="tile{% if f.type != 'image' %} {{ f.type }}{% endif %}" href="/media?p={{ f.rel|urlencode }}"
+         target="_blank" rel="noopener" title="{{ f.channel_title }} · {{ f.name }} · {{ f.size_str }}">
+        {% if f.type == "image" %}
+          <img src="/media?p={{ f.rel|urlencode }}" loading="lazy" decoding="async" alt="">
+        {% elif f.type == "video" %}
+          <img class="thumb" src="/thumb?p={{ f.rel|urlencode }}" loading="lazy" decoding="async" alt=""
+               onerror="this.remove()">
+          <div class="play-badge">▶</div>
+        {% endif %}
+        <div class="label">{{ f.channel_title }} · {{ f.size_str }}</div>
+      </a>
+    {% endfor %}
+  </div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const btn = document.getElementById("mk-delete");
+const msg = document.getElementById("mk-msg");
+const failedList = document.getElementById("mk-failed");
+
+btn.addEventListener("click", async () => {
+  if (!confirm("Delete all {{ count }} marked file(s), {{ size_str }}?\n\nThis cannot be undone.")) return;
+  btn.disabled = true;
+  failedList.replaceChildren();
+  msg.textContent = "Deleting…";
+  msg.className = "msg";
+  try {
+    const resp = await fetch("/api/files/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ marked: true }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
+    if (data.failed.length) {
+      msg.textContent = `Deleted ${data.removed} file(s), freed ${data.freed}. ${data.failed.length} could not be deleted:`;
+      msg.className = "msg error";
+      failedList.replaceChildren(...data.failed.map((f) => {
+        const li = document.createElement("li"); li.textContent = f; return li;
+      }));
+    } else {
+      msg.textContent = `Done: deleted ${data.removed} file(s), freed ${data.freed}. Reloading…`;
+      msg.className = "msg ok";
+      setTimeout(() => location.reload(), 1500);
+    }
+  } catch (err) {
+    msg.textContent = "Delete failed: " + err.message;
+    msg.className = "msg error";
+    btn.disabled = false;
+  }
+});
+</script>
+{% endblock %}

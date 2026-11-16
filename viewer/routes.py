@@ -5,11 +5,12 @@ Everything listed comes from the library (src/db.py), not from walking folders.
 import math
 import mimetypes
 from flask import (
-    Blueprint, abort, current_app, make_response, render_template, request,
+    Blueprint, abort, current_app, jsonify, make_response, render_template, request,
     send_file, send_from_directory,
 )
-from src.migrate import old_folder_names
+from src.db import RATINGS
 from viewer import config
+from viewer.download_routes import _json_body
 from viewer.helpers import (
     SORT_OPTIONS, DEFAULT_SORT, CHANNEL_SORTS, DEFAULT_CHANNEL_SORT,
     card, file_item, sort_channels, page_window,
@@ -21,6 +22,8 @@ bp = Blueprint("viewer", __name__)
 PER_PAGE_OPTIONS = sorted({20, 50, 100, config.PAGE_SIZE})
 VIEW_KINDS = ("images", "videos", "audio")
 TYPES = {"": "", "image": "images", "video": "videos", "audio": "audio"}
+RATING_FILTERS = {"": "All ratings", "good": "Good", "bad": "Not good",
+                  "delete": "To delete", "none": "Not rated"}
 
 
 def _library():
@@ -60,7 +63,6 @@ def index():
         query=q,
         current_sort=sort_key,
         sort_options=CHANNEL_SORTS,
-        old_folders=len(old_folder_names(lib)),
     )
 
 
@@ -75,6 +77,9 @@ def channel_page(channel):
     kind = request.args.get("type", "")
     if kind not in TYPES:
         kind = ""
+    rating = request.args.get("rating", "")
+    if rating not in RATING_FILTERS:
+        rating = ""
     q = request.args.get("q", "").strip().lower()
     sort_key = _normalize_sort(request.args.get("sort", DEFAULT_SORT))
     per = _per_page()
@@ -83,11 +88,11 @@ def channel_page(channel):
     except ValueError:
         page = 1
 
-    _, total = lib.channel_files(channel, VIEW_KINDS, TYPES[kind], q, limit=0)
+    _, total = lib.channel_files(channel, VIEW_KINDS, TYPES[kind], q, limit=0, rating=rating)
     pages = max(1, math.ceil(total / per))
     page = min(max(page, 1), pages)
     rows, _ = lib.channel_files(channel, VIEW_KINDS, TYPES[kind], q, sort_key,
-                                limit=per, offset=(page - 1) * per)
+                                limit=per, offset=(page - 1) * per, rating=rating)
 
     resp = make_response(render_template(
         "channel.html",
@@ -100,8 +105,11 @@ def channel_page(channel):
         pages=pages,
         window=page_window(page, pages),
         first_index=(page - 1) * per + 1,
-        url_args={k: v for k, v in {"type": kind, "sort": sort_key, "q": q}.items() if v},
+        url_args={k: v for k, v in {"type": kind, "sort": sort_key, "q": q,
+                                    "rating": rating}.items() if v},
         current_type=kind,
+        current_rating=rating,
+        rating_options=RATING_FILTERS,
         current_sort=sort_key,
         sort_options=SORT_OPTIONS,
         query=q,
@@ -112,6 +120,20 @@ def channel_page(channel):
     if "per" in request.args:
         resp.set_cookie("per_page", str(per), max_age=365 * 24 * 3600, samesite="Lax")
     return resp
+
+
+# ─── POST /api/rate {path, rating} — rating null clears it ──────
+@bp.post("/api/rate")
+def rate():
+    body = _json_body()
+    path, rating = body.get("path"), body.get("rating")
+    if not isinstance(path, str) or not path or (rating is not None and rating not in RATINGS):
+        abort(400)
+    lib = _library()
+    if path not in lib.known_paths([path]):
+        return jsonify(error="File is not in the database"), 404
+    lib.set_rating(path, rating)
+    return jsonify(path=path, rating=rating, marked=lib.marked_summary()["count"])
 
 
 # ─── GET /media?p=<relative-path>[&download=1] ──────────────────

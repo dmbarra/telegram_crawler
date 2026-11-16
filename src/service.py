@@ -150,8 +150,6 @@ class TelegramService:
             return "Files at the same time must be 1 to 20"
         if max_messages < 0:
             return "Max messages must be 0 or more"
-        if not self.library.is_created():
-            return "Create the database first: open the Migrate page and press Create database"
         with self._lock:
             if self.status != "ready":
                 return "Telegram is not connected"

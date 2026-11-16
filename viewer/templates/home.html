@@ -23,10 +23,7 @@
   <a class="card" href="/files">
     <h2>Files Manager</h2>
     <p>See what uses space and delete files or folders.</p>
-  </a>
-  <a class="card" href="/migrate">
-    <h2>Migrate</h2>
-    <p>Create the database, then move old downloads to the new names. Temporary.</p>
+    {% if marked %}<p class="marked-count">{{ marked }} file{% if marked != 1 %}s{% endif %} marked to delete</p>{% endif %}
   </a>
 </main>
 {% endblock %}
