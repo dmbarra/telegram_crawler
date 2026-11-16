@@ -87,7 +87,10 @@ def media_folder(message) -> str:
         return "videos"
     if message.audio or message.voice:
         return "audio"
-    mime = (message.document.mime_type or "") if message.document else ""
+    return folder_for_mime((message.document.mime_type or "") if message.document else "")
+
+
+def folder_for_mime(mime: str) -> str:
     if mime.startswith("image/"):
         return "images"
     if mime.startswith("video/"):

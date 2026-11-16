@@ -19,7 +19,7 @@ from src.config import (
     API_HASH, API_ID, DATA_DIR, DOWNLOADS_DIR, SESSION_PATH, validate,
 )
 from src.service import TelegramService
-from viewer import config, create_app, scanner
+from viewer import config, create_app
 from viewer.thumbnails import FFMPEG_AVAILABLE
 
 
@@ -43,7 +43,7 @@ def main():
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    telegram = TelegramService(on_job_done=scanner.invalidate)
+    telegram = TelegramService()
     telegram.start()
     app = create_app(telegram)
 

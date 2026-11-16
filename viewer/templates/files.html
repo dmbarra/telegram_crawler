@@ -3,10 +3,10 @@
 
 {% block body %}
 <header>
-  <a href="/" class="btn">← Home</a>
-  <h1>Files Manager</h1>
+  <a href="{{ '/files' if channel else '/' }}" class="btn">← {{ 'Channels' if channel else 'Home' }}</a>
+  <h1>Files Manager{% if channel %} · {{ channel_title }}{% endif %}</h1>
   <form method="get">
-    <input type="hidden" name="p" value="{{ rel }}">
+    {% if channel %}<input type="hidden" name="c" value="{{ channel }}">{% endif %}
     <select name="sort" onchange="this.form.submit()">
       {% for key, label in sort_options.items() %}
         <option value="{{ key }}" {% if key == current_sort %}selected{% endif %}>Sort: {{ label }}</option>
@@ -17,43 +17,66 @@
 </header>
 
 <main id="main">
-  <nav class="crumbs">
-    <a href="?sort={{ current_sort }}">downloads</a>
-    {% for c in crumbs %} / <a href="?p={{ c.rel|urlencode }}&sort={{ current_sort }}">{{ c.name }}</a>{% endfor %}
-    <span class="muted">· {{ entries|length }} item{% if entries|length != 1 %}s{% endif %} · {{ total_str }}</span>
-  </nav>
+  {% if old_folders %}
+    <div class="notice">{{ old_folders }} old folder{% if old_folders != 1 %}s are{% else %} is{% endif %} not migrated yet,
+      so {% if old_folders != 1 %}their{% else %}its{% endif %} files are not listed here. <a href="/migrate">Open Migrate</a></div>
+  {% endif %}
 
-  {% if not entries %}
-    <div class="empty">This folder is empty.</div>
+  <div class="row">
+    <button class="btn danger" id="fm-delete" disabled>Delete selected</button>
+    <span class="msg" id="fm-msg">Deleted files are remembered and never downloaded again.</span>
+  </div>
+  <ul class="fm-failed error" id="fm-failed"></ul>
+
+  {% if not channel %}
+    {% if not channels %}
+      <div class="empty">No files in the database yet.</div>
+    {% else %}
+      <p class="muted">{{ channels|length }} channel{% if channels|length != 1 %}s{% endif %} · {{ total_str }}.
+        Ticking a channel deletes all its files.</p>
+      <table class="fm">
+        <thead><tr><th><input type="checkbox" id="fm-all" title="Select all"></th>
+          <th>Channel</th><th class="num">Files</th><th class="num">Size</th><th>Last file</th></tr></thead>
+        <tbody>
+          {% for c in channels %}
+            <tr>
+              <td><input type="checkbox" class="fm-cb" data-channel="{{ c.id }}" data-label="{{ c.title }} ({{ c.count }} files)"></td>
+              <td class="name"><a href="?c={{ c.id }}">{{ c.title }}</a> <span class="muted">{{ c.id }}</span></td>
+              <td class="num">{{ c.count }}</td>
+              <td class="num">{{ c.size_str }}</td>
+              <td class="muted">{{ c.last }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
   {% else %}
-    <div class="row">
-      <button class="btn danger" id="fm-delete" disabled>Delete selected</button>
-      <span class="msg" id="fm-msg"></span>
-    </div>
+    <p class="muted">{{ total }} file{% if total != 1 %}s{% endif %}{% if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}</p>
     <table class="fm">
-      <thead>
-        <tr>
-          <th><input type="checkbox" id="fm-all" title="Select all"></th>
-          <th>Name</th><th class="num">Size</th><th>Date</th>
-        </tr>
-      </thead>
+      <thead><tr><th><input type="checkbox" id="fm-all" title="Select all on this page"></th>
+        <th>File</th><th>Caption</th><th>Type</th><th class="num">Size</th><th>Date</th></tr></thead>
       <tbody>
         {% for e in entries %}
           <tr>
-            <td><input type="checkbox" class="fm-cb" value="{{ e.rel }}" data-dir="{{ 1 if e.is_dir else 0 }}"></td>
-            <td class="name">
-              {% if e.is_dir %}
-                <a href="?p={{ e.rel|urlencode }}&sort={{ current_sort }}">📁 {{ e.name }}/</a>
-              {% else %}
-                <a href="/media?p={{ e.rel|urlencode }}" target="_blank" rel="noopener">{{ e.name }}</a>
-              {% endif %}
-            </td>
+            <td><input type="checkbox" class="fm-cb" data-path="{{ e.rel }}" data-label="{{ e.name }}"></td>
+            <td class="name"><a href="/media?p={{ e.rel|urlencode }}" target="_blank" rel="noopener">{{ e.name }}</a></td>
+            <td class="muted">{{ e.caption[:80] }}</td>
+            <td class="muted">{{ e.kind }}</td>
             <td class="num">{{ e.size_str }}</td>
             <td class="muted">{{ e.date }}</td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
+    {% if pages > 1 %}
+      <nav class="pager">
+        {% for n in window %}
+          {% if n is none %}<span class="gap">…</span>
+          {% elif n == page %}<span class="btn current">{{ n }}</span>
+          {% else %}<a class="btn" href="?c={{ channel }}&sort={{ current_sort }}&page={{ n }}">{{ n }}</a>{% endif %}
+        {% endfor %}
+      </nav>
+    {% endif %}
   {% endif %}
 </main>
 {% endblock %}
@@ -62,34 +85,46 @@
 <script>
 const btn = document.getElementById("fm-delete");
 const all = document.getElementById("fm-all");
+const msg = document.getElementById("fm-msg");
+const failedList = document.getElementById("fm-failed");
 const boxes = () => Array.from(document.querySelectorAll(".fm-cb"));
 const checked = () => boxes().filter((cb) => cb.checked);
-const update = () => { if (btn) btn.disabled = !checked().length; };
+const update = () => { btn.disabled = !checked().length; };
 
 document.addEventListener("change", (e) => {
   if (e.target === all) boxes().forEach((cb) => { cb.checked = all.checked; });
   update();
 });
 
-if (btn) btn.addEventListener("click", async () => {
+btn.addEventListener("click", async () => {
   const sel = checked();
-  const dirs = sel.filter((cb) => cb.dataset.dir === "1").length;
-  const msg = document.getElementById("fm-msg");
-  const what = `${sel.length - dirs} file(s)` + (dirs ? ` and ${dirs} folder(s) with everything inside` : "");
-  if (!confirm(`Delete ${what}? This cannot be undone.`)) return;
+  const channels = sel.filter((cb) => cb.dataset.channel).map((cb) => Number(cb.dataset.channel));
+  const paths = sel.filter((cb) => cb.dataset.path).map((cb) => cb.dataset.path);
+  const names = sel.map((cb) => cb.dataset.label);
+  const what = channels.length ? `ALL files of ${channels.length} channel(s):\n` : `${paths.length} file(s):\n`;
+  if (!confirm(`Delete ${what}${names.slice(0, 10).join("\n")}${names.length > 10 ? "\n…" : ""}\n\nThis cannot be undone.`)) return;
   btn.disabled = true;
+  failedList.replaceChildren();
   try {
     const resp = await fetch("/api/files/delete", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paths: sel.map((cb) => cb.value) }),
+      body: JSON.stringify({ paths, channels }),
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
-    msg.textContent = `Deleted ${data.removed} file(s), freed ${data.freed}. Reloading…`;
-    msg.className = "msg";
-    setTimeout(() => location.reload(), 1200);
+    if (data.failed.length) {
+      msg.textContent = `Deleted ${data.removed} file(s), freed ${data.freed}. ${data.failed.length} could not be deleted:`;
+      msg.className = "msg error";
+      failedList.replaceChildren(...data.failed.map((f) => {
+        const li = document.createElement("li"); li.textContent = f; return li;
+      }));
+    } else {
+      msg.textContent = `Done: deleted ${data.removed} file(s), freed ${data.freed}. Reloading…`;
+      msg.className = "msg ok";
+      setTimeout(() => location.reload(), 1500);
+    }
   } catch (err) {
-    msg.textContent = err.message;
+    msg.textContent = "Delete failed: " + err.message;
     msg.className = "msg error";
     btn.disabled = false;
   }

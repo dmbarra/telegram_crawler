@@ -42,7 +42,38 @@ CREATE TABLE IF NOT EXISTS files (
 );
 CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 CREATE INDEX IF NOT EXISTS idx_files_sha ON files(channel_id, sha256);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS migrations (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    folder     TEXT NOT NULL,
+    channel_id INTEGER NOT NULL,
+    at         TEXT NOT NULL DEFAULT (datetime('now')),
+    renamed    INTEGER NOT NULL,
+    unmatched  INTEGER NOT NULL,
+    copies     INTEGER NOT NULL,
+    errors     INTEGER NOT NULL,
+    verified   INTEGER NOT NULL,
+    report     TEXT NOT NULL
+);
 """
+
+# One row per file on disk: several records can share a path (forwards, kept copies).
+KEPT = """kept AS (
+    SELECT path, MIN(channel_id) AS channel_id, MAX(kind) AS kind, MAX(size) AS size,
+           MAX(caption) AS caption, MIN(COALESCE(msg_date, downloaded_at)) AS at
+    FROM files WHERE status = 'downloaded' AND channel_id IS NOT NULL GROUP BY path
+)"""
+
+SORTS = {
+    "newest": "at DESC", "oldest": "at ASC",
+    "name_asc": "path ASC", "name_desc": "path DESC",
+    "size_desc": "size DESC", "size_asc": "size ASC",
+}
 
 
 class Library:
@@ -126,13 +157,14 @@ class Library:
         """Rows from the old JSON state that were not moved to the new layout yet."""
         return self._all("SELECT * FROM files WHERE channel_id IS NULL")
 
-    def move_file(self, old: str, new: str, channel_id, kind, sha256, caption, msg_date) -> None:
-        self._run(
-            """UPDATE files SET path = ?, channel_id = ?, kind = ?,
-                                sha256 = COALESCE(sha256, ?), caption = ?, msg_date = ?
-               WHERE path = ? AND channel_id IS NULL""",
-            (new, channel_id, kind, sha256, caption, msg_date, old),
-        )
+    def repoint_legacy(self, old: str, new: str, channel_id: int) -> None:
+        """Other old records that pointed at a moved file now point at its new path."""
+        self._run("UPDATE files SET path = ?, channel_id = ? WHERE path = ? AND channel_id IS NULL",
+                  (new, channel_id, old))
+
+    def forget(self, media_keys) -> None:
+        with self._lock, self._conn:
+            self._conn.executemany("DELETE FROM files WHERE media_key = ?", [(k,) for k in media_keys])
 
     def claim_deleted(self, folder: str, channel_id: int) -> int:
         """Give deleted legacy rows under an old folder their channel id."""
@@ -141,6 +173,80 @@ class Library:
                WHERE channel_id IS NULL AND status = 'deleted' AND path LIKE ? ESCAPE '\\'""",
             (channel_id, _like_prefix(folder)),
         )
+
+    # ─── viewer + files manager ─────────────────────────────────
+    def channel_cards(self, kinds=None) -> list:
+        where, args = _kinds_filter(kinds)
+        return self._all(
+            f"""WITH {KEPT}
+                SELECT k.channel_id, COALESCE(c.title, 'Channel ' || k.channel_id) AS title,
+                       COUNT(*) AS n, SUM(k.size) AS size, MAX(k.at) AS last,
+                       SUM(k.kind = 'images') AS images, SUM(k.kind = 'videos') AS videos,
+                       SUM(k.kind = 'audio') AS audio,
+                       (SELECT k2.path || '|' || k2.kind FROM kept k2 WHERE k2.channel_id = k.channel_id
+                          AND k2.kind IN ('images', 'videos') ORDER BY k2.at DESC LIMIT 1) AS cover
+                FROM kept k LEFT JOIN channels c ON c.id = k.channel_id
+                WHERE 1 {where} GROUP BY k.channel_id""",
+            args,
+        )
+
+    def channel_files(self, channel_id: int, kinds=None, kind="", q="", sort="newest",
+                      limit=50, offset=0):
+        """(rows, total) for one channel page."""
+        where, args = _kinds_filter(kinds)
+        where += " AND k.channel_id = ?"
+        args.append(channel_id)
+        if kind:
+            where += " AND k.kind = ?"
+            args.append(kind)
+        if q:
+            where += " AND (k.path LIKE ? OR k.caption LIKE ?)"
+            args += [f"%{q}%", f"%{q}%"]
+        total = self._one(f"WITH {KEPT} SELECT COUNT(*) AS n FROM kept k WHERE 1 {where}", args)["n"]
+        rows = self._all(
+            f"WITH {KEPT} SELECT * FROM kept k WHERE 1 {where} "
+            f"ORDER BY {SORTS.get(sort, SORTS['newest'])} LIMIT ? OFFSET ?",
+            args + [limit, offset],
+        )
+        return rows, total
+
+    def channel_paths(self, channel_ids) -> list:
+        marks = ",".join("?" * len(channel_ids))
+        return [r["path"] for r in self._all(
+            f"""SELECT DISTINCT path FROM files
+                WHERE status = 'downloaded' AND channel_id IN ({marks})""", list(channel_ids))]
+
+    def known_paths(self, paths) -> set:
+        known = set()
+        for p in paths:
+            if self._one("SELECT 1 FROM files WHERE path = ? AND status = 'downloaded'", (p,)):
+                known.add(p)
+        return known
+
+    # ─── setup + migration history ──────────────────────────────
+    def is_created(self) -> bool:
+        return self._one("SELECT 1 FROM meta WHERE key = 'created_at'") is not None
+
+    def set_created(self) -> None:
+        self._run("INSERT OR IGNORE INTO meta (key, value) VALUES ('created_at', datetime('now'))")
+
+    def save_migration(self, folder, channel_id, renamed, unmatched, copies, errors,
+                       verified, report: str) -> None:
+        self._run(
+            """INSERT INTO migrations (folder, channel_id, renamed, unmatched, copies, errors,
+                                       verified, report) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (folder, channel_id, renamed, unmatched, copies, errors, int(verified), report),
+        )
+
+    def migrations(self) -> list:
+        return self._all(
+            """SELECT m.id, m.folder, m.channel_id, m.at, m.renamed, m.unmatched, m.copies,
+                      m.errors, m.verified, c.title
+               FROM migrations m LEFT JOIN channels c ON c.id = m.channel_id ORDER BY m.id DESC""")
+
+    def migration_report(self, migration_id: int):
+        row = self._one("SELECT report FROM migrations WHERE id = ?", (migration_id,))
+        return row["report"] if row else None
 
     # ─── channels ───────────────────────────────────────────────
     def channel_titles(self) -> dict:
@@ -183,6 +289,12 @@ class Library:
                     (r["id"], ident),
                 )
             self._conn.execute("UPDATE channels SET ident = NULL WHERE ident = ?", (ident,))
+
+
+def _kinds_filter(kinds):
+    if not kinds:
+        return "", []
+    return f" AND k.kind IN ({','.join('?' * len(kinds))})", list(kinds)
 
 
 def _like_prefix(folder: str) -> str:

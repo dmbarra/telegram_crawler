@@ -5,146 +5,241 @@
 <header>
   <a href="/" class="btn">← Home</a>
   <h1>Migrate old downloads</h1>
-  <div class="stats">{{ folders|length }} old folder{% if folders|length != 1 %}s{% endif %} left</div>
+  {% if created %}
+    <div class="stats">Database: ready · {{ folders|length }} folder{% if folders|length != 1 %}s{% endif %} to do · {{ done|length }} run{% if done|length != 1 %}s{% endif %} done</div>
+  {% endif %}
 </header>
 
 <main id="main">
   {% if not ready %}
-    <div class="notice">Telegram is not connected yet. Reload this page in a moment.</div>
+    <div class="notice">Telegram is not connected{% if tg_error %}: {{ tg_error }}{% endif %}. Buttons work once it is connected. Reload in a moment.</div>
   {% endif %}
 
-  <section class="panel">
-    <h2>1. Backup and import</h2>
-    <p class="muted">Copies the old files (download_state.json, file_hashes.json, channels.txt) to a
-      backup folder, then loads them into the database. Files on disk are not touched.
-      Safe to run again. Do this before your first download.</p>
-    <div class="row">
-      <button class="btn primary" id="import" {% if not ready or not has_old_files %}disabled{% endif %}>Backup and import</button>
-      <span class="msg" id="import-msg">{% if not has_old_files %}No old files found.{% endif %}</span>
-    </div>
-  </section>
+  {% if not created %}
+    <section class="panel">
+      <h2>Step 1 of 2 — Create the database</h2>
+      <p class="muted">Creates <code>library.db</code>. If old files exist (download_state.json,
+        file_hashes.json, channels.txt) they are copied to a backup folder and loaded.
+        Files on disk are not touched. Downloads and migration stay locked until this is done.</p>
+      <div class="row">
+        <button class="btn primary" id="create" {% if not ready %}disabled{% endif %}>Create database</button>
+      </div>
+      <ul class="mg-steps" id="create-steps"></ul>
+    </section>
+  {% else %}
+    <section class="panel">
+      <h2>Step 2 of 2 — Move old folders</h2>
+      <p class="muted">Every file goes into the database and gets a new name:
+        <code>&lt;channel id&gt;/&lt;type&gt;/&lt;date&gt;_&lt;message id&gt;.ext</code>.
+        Files that match no Telegram message go to <code>&lt;channel id&gt;/unmatched/&lt;hash&gt;.ext</code>.
+        After a run, every file is checked and the old folder is removed.</p>
+      {% if not folders %}
+        <div class="mg-result ok">All folders are migrated. Nothing left to do.</div>
+      {% else %}
+        <table class="fm" id="todo">
+          <thead><tr><th>Old folder</th><th class="num">Files</th><th class="num">Size</th><th>Channel</th><th></th></tr></thead>
+          <tbody>
+            {% for f in folders %}
+              <tr class="mg-row" data-folder="{{ f.folder }}">
+                <td class="name">{{ f.folder }}</td>
+                <td class="num">{{ f.files }}</td>
+                <td class="num">{{ f.size_str }}</td>
+                <td>
+                  <select class="mg-channel">
+                    <option value="">— pick the channel —</option>
+                    {% for c in channels %}
+                      <option value="{{ c.id }}" {% if c.id == f.channel_id %}selected{% endif %}>{{ c.title }}</option>
+                    {% endfor %}
+                  </select>
+                </td>
+                <td><button class="btn small mg-preview" {% if not ready %}disabled{% endif %}>Preview</button></td>
+              </tr>
+              <tr class="mg-detail" hidden><td colspan="5"></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    </section>
 
-  <section class="panel" style="margin-top: 20px;">
-    <h2>2. Move folders, one at a time</h2>
-    <p class="muted">Files move to <code>&lt;channel id&gt;/&lt;type&gt;/&lt;date&gt;_&lt;message id&gt;.ext</code>.
-      Files with no record, or whose message is gone, stay where they are. Press Preview first.</p>
-    {% if not folders %}
-      <div class="empty">No old folders left. You can remove the migration page.</div>
-    {% else %}
-      <table class="fm">
-        <thead>
-          <tr><th>Folder</th><th class="num">Files</th><th class="num">Size</th>
-            <th class="num">Known</th><th class="num">Unknown</th><th>Channel</th><th></th></tr>
-        </thead>
-        <tbody>
-          {% for f in folders %}
-            <tr data-folder="{{ f.folder }}">
-              <td class="name">{{ f.folder }}</td>
-              <td class="num">{{ f.files }}</td>
-              <td class="num">{{ f.size_str }}</td>
-              <td class="num">{{ f.tracked }}</td>
-              <td class="num">{{ f.untracked }}</td>
-              <td>
-                <select class="mg-channel">
-                  <option value="">— no match, pick one —</option>
-                  {% for c in channels %}
-                    <option value="{{ c.id }}" {% if c.id == f.channel_id %}selected{% endif %}>{{ c.title }}</option>
-                  {% endfor %}
-                </select>
-              </td>
-              <td>
-                <button class="btn small mg-preview">Preview</button>
-                <button class="btn small danger mg-run">Run</button>
-              </td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% endif %}
-    <div class="row"><span class="msg" id="mg-msg"></span></div>
-    <table class="fm" id="mg-plan" hidden>
-      <thead><tr><th>Now</th><th>After</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </section>
+    <section class="panel" style="margin-top: 20px;">
+      <h2>Done</h2>
+      {% if not done %}
+        <p class="muted">No folder migrated yet.</p>
+      {% else %}
+        <table class="fm">
+          <thead><tr><th>Date</th><th>Old folder → channel</th><th class="num">Renamed</th>
+            <th class="num">Unmatched</th><th class="num">Copies removed</th><th class="num">Errors</th><th>Check</th><th></th></tr></thead>
+          <tbody>
+            {% for m in done %}
+              <tr>
+                <td class="muted">{{ m.at }}</td>
+                <td class="name">{{ m.folder }} → {{ m.title or m.channel_id }}</td>
+                <td class="num">{{ m.renamed }}</td>
+                <td class="num">{{ m.unmatched }}</td>
+                <td class="num">{{ m.copies }}</td>
+                <td class="num">{{ m.errors }}</td>
+                <td>{% if m.verified %}<span class="tag ok">OK</span>{% else %}<span class="tag error">FAILED</span>{% endif %}</td>
+                <td><button class="btn small mg-report" data-id="{{ m.id }}">Report</button></td>
+              </tr>
+              <tr class="mg-detail" hidden><td colspan="8"></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    </section>
+  {% endif %}
 </main>
 {% endblock %}
 
 {% block scripts %}
 <script>
-const $ = (id) => document.getElementById(id);
+const RESULT_TEXT = { rename: "renamed", unmatched: "unmatched", copy: "copy removed", error: "ERROR" };
 
-async function post(path, body) {
-  const resp = await fetch(path, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body || {}),
-  });
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+async function call(path, body) {
+  const opts = body === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  };
+  const resp = await fetch(path, opts);
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
   return data;
 }
 
-function say(el, text, isError) {
-  el.textContent = text;
-  el.className = "msg" + (isError ? " error" : "");
+function summaryLine(s) {
+  return `${s.renamed} renamed · ${s.unmatched} unmatched · ${s.copies} copies removed · ${s.errors} errors`;
 }
 
-function showPlan(actions) {
-  const body = $("mg-plan").querySelector("tbody");
-  body.replaceChildren(...actions.map((a) => {
-    const tr = document.createElement("tr");
-    const now = document.createElement("td");
-    const after = document.createElement("td");
-    now.className = after.className = "name";
-    now.textContent = a.old;
-    after.textContent = a.new || "stays — " + a.why;
-    if (!a.new) after.classList.add("warn");
-    tr.append(now, after);
-    return tr;
-  }));
-  $("mg-plan").hidden = false;
+function actionsTable(actions, withCheck) {
+  const t = el("table", "fm");
+  const head = el("tr");
+  ["Now", "After", "Result", "Why", ...(withCheck ? ["Check"] : [])].forEach((h) => head.append(el("th", "", h)));
+  t.append(el("thead"));
+  t.tHead.append(head);
+  const body = el("tbody");
+  actions.forEach((a) => {
+    const tr = el("tr");
+    tr.append(el("td", "name", a.old), el("td", "name", a.new || "—"),
+      el("td", a.result === "error" ? "error" : a.result === "unmatched" ? "warn" : "ok", RESULT_TEXT[a.result] || a.result),
+      el("td", "muted", a.note || ""));
+    if (withCheck) tr.append(el("td", a.check ? "error" : "ok", a.check || "OK"));
+    body.append(tr);
+  });
+  t.append(body);
+  return t;
 }
 
-$("import").addEventListener("click", async (e) => {
-  e.target.disabled = true;
-  try {
-    const r = await post("/api/migrate/import");
-    let text = `Backup: ${r.backup}. ${r.added} records added, ${r.known} already known, ` +
-               `${r.outside} outside the downloads folder, ${r.channels_added} channels added.`;
-    if (r.channels_failed.length) text += " Not added: " + r.channels_failed.join("; ");
-    say($("import-msg"), text, r.channels_failed.length > 0);
-  } catch (err) {
-    say($("import-msg"), err.message, true);
+function renderReport(box, r) {
+  const s = r.summary;
+  box.replaceChildren();
+  box.append(el("div", "mg-result " + (r.verified ? "ok" : "error"), r.verified
+    ? `Success: ${r.folder} → ${r.channel}. Checked ${s.checked} of ${s.checked} files, all OK. Old folder removed.`
+    : `Problems: ${r.folder} → ${r.channel}. ${s.check_failed} of ${s.checked} files failed the check.` +
+      (s.folder_removed ? "" : " The old folder is still there.")));
+  box.append(el("p", "muted", summaryLine(s) + (s.forgotten ? ` · ${s.forgotten} old records of files no longer on disk removed` : "")));
+  const bad = r.actions.filter((a) => a.check);
+  if (bad.length) {
+    box.append(el("h3", "", "Files with problems"));
+    box.append(actionsTable(bad, true));
   }
-  e.target.disabled = false;
+  const d = el("details");
+  d.append(el("summary", "", `All ${r.actions.length} files`));
+  d.append(actionsTable(r.actions, true));
+  box.append(d);
+}
+
+// ── step 1 ──────────────────────────────────────────────────
+const createBtn = document.getElementById("create");
+if (createBtn) createBtn.addEventListener("click", async () => {
+  const list = document.getElementById("create-steps");
+  createBtn.disabled = true;
+  list.replaceChildren(el("li", "", "Working…"));
+  try {
+    const r = await call("/api/migrate/create", {});
+    list.replaceChildren(...r.steps.map((s) => el("li", s.level, s.text)));
+    list.append(el("li", r.ok ? "ok" : "error", r.ok
+      ? "Success. The database is ready."
+      : "The database was created, but some steps failed (see the red lines above)."));
+    const next = el("button", "btn primary", "Continue to step 2");
+    next.addEventListener("click", () => location.reload());
+    list.append(next);
+  } catch (err) {
+    list.replaceChildren(el("li", "error", "Failed: " + err.message + ". Nothing was created."));
+    createBtn.disabled = false;
+  }
 });
 
-document.querySelectorAll("tr[data-folder]").forEach((tr) => {
+// ── step 2 ──────────────────────────────────────────────────
+document.querySelectorAll(".mg-row").forEach((tr) => {
   const folder = tr.dataset.folder;
-  const target = () => ({ folder, channel_id: tr.querySelector(".mg-channel").value });
-  const buttons = tr.querySelectorAll("button");
+  const detail = tr.nextElementSibling;
+  const box = detail.firstElementChild;
+  const previewBtn = tr.querySelector(".mg-preview");
+  const select = tr.querySelector(".mg-channel");
 
-  async function act(path, confirmText) {
-    if (!target().channel_id) { say($("mg-msg"), "Pick a channel first.", true); return; }
-    if (confirmText && !confirm(confirmText)) return;
-    buttons.forEach((b) => b.disabled = true);
-    say($("mg-msg"), "Working… (asks Telegram for the messages)");
+  function show(...nodes) { box.replaceChildren(...nodes); detail.hidden = false; }
+
+  previewBtn.addEventListener("click", async () => {
+    if (!select.value) { show(el("div", "mg-result error", "Pick the channel this folder belongs to.")); return; }
+    const target = { folder, channel_id: Number(select.value) };
+    const channelName = select.options[select.selectedIndex].text;
+    previewBtn.disabled = select.disabled = true;
+    show(el("div", "mg-result", "Preview: asking Telegram for the messages of this channel… Large channels can take a few minutes."));
     try {
-      const r = await post(path, target());
-      showPlan(r.actions);
-      const moving = r.actions.filter((a) => a.new).length;
-      say($("mg-msg"), r.moved === undefined
-        ? `Preview of ${folder}: ${moving} will move, ${r.actions.length - moving} stay.`
-        : `Done: ${r.moved} moved, ${r.stayed} stayed. Reload to update the table.`);
+      const r = await call("/api/migrate/preview", target);
+      const run = el("button", "btn danger", `Run: move ${r.summary.total} files to ${channelName}`);
+      const cancel = el("button", "btn", "Cancel");
+      const d = el("details");
+      d.open = r.actions.length <= 30;
+      d.append(el("summary", "", `All ${r.actions.length} files`), actionsTable(r.actions, false));
+      show(el("div", "mg-result", `Preview (nothing changed yet): ${summaryLine(r.summary)}`),
+           el("div", "row"), d);
+      box.children[1].append(run, cancel);
+      cancel.addEventListener("click", () => { detail.hidden = true; previewBtn.disabled = select.disabled = false; });
+      run.addEventListener("click", async () => {
+        if (!confirm(`Move all ${r.summary.total} files of "${folder}" now?`)) return;
+        run.disabled = cancel.disabled = true;
+        show(el("div", "mg-result", "Running: moving and checking every file… Do not close this page."));
+        try {
+          const rep = await call("/api/migrate/run", target);
+          renderReport(box, rep);
+          const back = el("button", "btn primary", "Back to the list");
+          back.addEventListener("click", () => location.reload());
+          box.append(el("div", "row"));
+          box.lastChild.append(back);
+          tr.classList.add(rep.verified ? "ok" : "error");
+        } catch (err) {
+          show(el("div", "mg-result error", "Run failed: " + err.message));
+          previewBtn.disabled = select.disabled = false;
+        }
+      });
     } catch (err) {
-      say($("mg-msg"), err.message, true);
+      show(el("div", "mg-result error", "Preview failed: " + err.message + ". Nothing was changed."));
+      previewBtn.disabled = select.disabled = false;
     }
-    buttons.forEach((b) => b.disabled = false);
-  }
+  });
+});
 
-  tr.querySelector(".mg-preview").addEventListener("click", () => act("/api/migrate/preview"));
-  tr.querySelector(".mg-run").addEventListener("click",
-    () => act("/api/migrate/run", `Move the files of "${folder}" now?`));
+// ── done list ───────────────────────────────────────────────
+document.querySelectorAll(".mg-report").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const detail = btn.closest("tr").nextElementSibling;
+    if (!detail.hidden) { detail.hidden = true; return; }
+    const box = detail.firstElementChild;
+    box.replaceChildren(el("div", "mg-result", "Loading report…"));
+    detail.hidden = false;
+    try {
+      renderReport(box, await call(`/api/migrate/report/${btn.dataset.id}`));
+    } catch (err) {
+      box.replaceChildren(el("div", "mg-result error", "Could not load the report: " + err.message));
+    }
+  });
 });
 </script>
 {% endblock %}

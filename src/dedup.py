@@ -11,21 +11,18 @@ def hash_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def group_of(rel: str) -> str:
-    return rel.split("/", 1)[0]
-
-
 def find_duplicates(library, downloads_dir: Path) -> list:
     """[{group, sha, keep, dups: [rel...], size}] — keep = oldest file (first downloaded).
-    A group is the top folder under downloads_dir (one per channel)."""
+    A group is one channel (its id, as text)."""
     by_key = {}
     seen = set()
     for r in library.kept_files():
         rel = r["path"]
-        if not r["sha256"] or rel in seen or not (downloads_dir / rel).is_file():
+        if not r["sha256"] or r["channel_id"] is None or rel in seen \
+                or not (downloads_dir / rel).is_file():
             continue
         seen.add(rel)
-        by_key.setdefault((group_of(rel), r["sha256"]), []).append((r["downloaded_at"], rel, r["size"] or 0))
+        by_key.setdefault((str(r["channel_id"]), r["sha256"]), []).append((r["downloaded_at"], rel, r["size"] or 0))
     out = []
     for (group, sha), files in by_key.items():
         if len(files) < 2:

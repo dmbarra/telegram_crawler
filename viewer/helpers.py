@@ -1,8 +1,4 @@
 """Small, side-effect-free helpers."""
-import time
-
-from viewer.config import IMAGE_EXTS, VIDEO_EXTS
-
 CHANNEL_SORTS = {
     "recent": "Newest download",
     "name":   "Name A → Z",
@@ -11,8 +7,8 @@ CHANNEL_SORTS = {
 DEFAULT_CHANNEL_SORT = "recent"
 
 SORT_OPTIONS = {
-    "newest":    "Newest first (download date)",
-    "oldest":    "Oldest first (download date)",
+    "newest":    "Newest first",
+    "oldest":    "Oldest first",
     "name_asc":  "Name A → Z",
     "name_desc": "Name Z → A",
     "size_desc": "Largest first",
@@ -29,55 +25,46 @@ def fmt_size(n: int) -> str:
     return f"{n / 1024 ** 4:.2f} TB"
 
 
-def classify_ext(ext: str) -> str:
-    ext = ext.lower()
-    if ext in IMAGE_EXTS:
-        return "image"
-    if ext in VIDEO_EXTS:
-        return "video"
-    return "audio"
+def kind_to_type(kind: str) -> str:
+    """Library kind (images/videos/audio) → tile type used by the templates."""
+    return {"images": "image", "videos": "video"}.get(kind, "audio")
 
 
-def apply_filters(files: list, kind: str, q: str) -> list:
-    if kind:
-        files = [f for f in files if f["type"] == kind]
-    if q:
-        files = [f for f in files if q in f["name"].lower() or q in f["caption"].lower()]
-    return files
-
-
-def sort_files(files: list, sort_key: str) -> list:
-    """Sort by download date (mtime), name, or size. Unknown keys → newest."""
-    if sort_key == "oldest":
-        return sorted(files, key=lambda x: x["mtime"])
-    if sort_key == "name_asc":
-        return sorted(files, key=lambda x: x["name"].lower())
-    if sort_key == "name_desc":
-        return sorted(files, key=lambda x: x["name"].lower(), reverse=True)
-    if sort_key == "size_desc":
-        return sorted(files, key=lambda x: x["size"], reverse=True)
-    if sort_key == "size_asc":
-        return sorted(files, key=lambda x: x["size"])
-    # default: newest (download date, descending)
-    return sorted(files, key=lambda x: x["mtime"], reverse=True)
-
-
-def channel_summary(name: str, title: str, files: list) -> dict:
-    """One card on the channel index: counts, size, last download, cover file."""
-    counts = {"image": 0, "video": 0, "audio": 0}
-    for f in files:
-        counts[f["type"]] += 1
-    newest = max(f["mtime"] for f in files)
-    visual = [f for f in files if f["type"] in ("image", "video")]
+def card(row, old_label: str = "") -> dict:
+    """One channel card (viewer index) or row (files manager) from Library.channel_cards()."""
     return {
+        "id": row["channel_id"],
+        "title": row["title"],
+        "count": row["n"],
+        "counts": {"image": row["images"], "video": row["videos"], "audio": row["audio"]},
+        "size": row["size"] or 0,
+        "size_str": fmt_size(row["size"] or 0),
+        "mtime": row["last"] or "",
+        "last": (row["last"] or "")[:10],
+        "cover": _cover(row["cover"]),
+    }
+
+
+def _cover(value):
+    if not value:
+        return None
+    rel, kind = value.rsplit("|", 1)
+    return {"rel": rel, "type": kind_to_type(kind)}
+
+
+def file_item(row) -> dict:
+    name = row["path"].rsplit("/", 1)[-1]
+    caption = (row["caption"] or "").strip().replace("\n", " ")
+    return {
+        "rel": row["path"],
         "name": name,
-        "title": title,
-        "count": len(files),
-        "counts": counts,
-        "size_str": fmt_size(sum(f["size"] for f in files)),
-        "mtime": newest,
-        "last": time.strftime("%Y-%m-%d", time.localtime(newest)),
-        "cover": max(visual, key=lambda f: f["mtime"]) if visual else None,
+        "label": caption[:80] or name,
+        "caption": caption,
+        "kind": row["kind"],
+        "type": kind_to_type(row["kind"]),
+        "size": row["size"] or 0,
+        "size_str": fmt_size(row["size"] or 0),
+        "date": (row["at"] or "")[:16].replace("T", " "),
     }
 
 
