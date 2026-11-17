@@ -116,6 +116,7 @@ def channel_page(channel):
         per=per,
         per_options=PER_PAGE_OPTIONS,
         tile_size=config.TILE_SIZE,
+        study_source=lib.is_study_source(channel),
     ))
     if "per" in request.args:
         resp.set_cookie("per_page", str(per), max_age=365 * 24 * 3600, samesite="Lax")
@@ -134,6 +135,50 @@ def rate():
         return jsonify(error="File is not in the database"), 404
     lib.set_rating(path, rating)
     return jsonify(path=path, rating=rating, marked=lib.marked_summary()["count"])
+
+
+# ─── ML analysis (study-source channels only) ──────────────────
+def _analyzer():
+    return current_app.extensions["telegram"].analyzer
+
+
+def _channel_arg(body):
+    channel = body.get("channel")
+    if isinstance(channel, bool) or not isinstance(channel, int):
+        abort(400)
+    return channel
+
+
+@bp.get("/api/ml/status")
+def ml_status():
+    return jsonify(_analyzer().snapshot(request.args.get("channel", type=int)))
+
+
+@bp.post("/api/ml/start")
+def ml_start():
+    err = _analyzer().start(_channel_arg(_json_body()))
+    if err:
+        return jsonify(error=err), 409
+    return jsonify(ok=True)
+
+
+@bp.post("/api/ml/stop")
+def ml_stop():
+    _json_body()
+    _analyzer().stop()
+    return jsonify(ok=True)
+
+
+@bp.post("/api/study-source")
+def study_source():
+    body = _json_body()
+    channel, on = _channel_arg(body), body.get("on")
+    if not isinstance(on, bool):
+        abort(400)
+    _library().set_study_source(channel, on)
+    if not on:
+        _analyzer().stop_channel(channel)
+    return jsonify(channel=channel, on=_library().is_study_source(channel))
 
 
 # ─── GET /media?p=<relative-path>[&download=1] ──────────────────

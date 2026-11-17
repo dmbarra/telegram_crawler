@@ -35,7 +35,7 @@ function openLb(i) {
   currentIdx = i;
 
   const el = all[i];
-  const { src, type, name, size } = el.dataset;
+  const { src, type, name, size, ml } = el.dataset;
 
   // CRITICAL: abort the previous video BEFORE creating the new one
   cleanupMedia();
@@ -65,7 +65,7 @@ function openLb(i) {
   const info = document.getElementById("lb-info");
   const pos = document.createElement("b");
   pos.textContent = `${i + 1}/${all.length}`;
-  info.replaceChildren(pos, ` · ${name} · ${size}`);
+  info.replaceChildren(pos, ` · ${name} · ${size}${ml ? " · " + ml : ""}`);
   const dl = document.createElement("a");
   dl.href = src + "&download=1";
   dl.textContent = "⬇ download";

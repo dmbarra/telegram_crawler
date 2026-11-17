@@ -64,6 +64,19 @@
 </header>
 
 <main id="main" style="--tile-size: {{ tile_size }}px;">
+  <section class="tools" id="ml-box" data-channel="{{ channel }}">
+    <h2>ML analysis</h2>
+    <div class="row">
+      <label><input type="checkbox" id="study-src" {% if study_source %}checked{% endif %}>
+        Study source <span class="muted">(consenting patients or public dataset; allows face analysis)</span></label>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="ml-start" disabled>Analyze new images</button>
+      <button class="btn" id="ml-stop" hidden>Stop</button>
+      <span class="msg" id="ml-msg">Checking…</span>
+    </div>
+  </section>
+
   {% if not files %}
     <div class="empty">No files match your filters.</div>
   {% endif %}
@@ -75,14 +88,14 @@
       {% set src = "/media?p=" ~ (f.rel|urlencode) %}
       {% if f.type == "image" %}
         <div class="tile" data-src="{{ src }}" data-type="image" data-rel="{{ f.rel }}"
-             data-rating="{{ f.rating }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+             data-rating="{{ f.rating }}" data-ml="{{ f.ml }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
           <span class="rate-badge"></span>
           <img src="{{ src }}" loading="lazy" decoding="async" alt="">
           <div class="label" title="{{ f.name }}">{{ f.label }}</div>
         </div>
       {% elif f.type == "video" %}
         <div class="tile video" data-src="{{ src }}" data-type="video" data-rel="{{ f.rel }}"
-             data-rating="{{ f.rating }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+             data-rating="{{ f.rating }}" data-ml="{{ f.ml }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
           <span class="rate-badge"></span>
           <img class="thumb" src="/thumb?p={{ f.rel|urlencode }}"
                loading="lazy" decoding="async" alt=""
@@ -92,7 +105,7 @@
         </div>
       {% else %}
         <div class="tile audio" data-src="{{ src }}" data-type="audio" data-rel="{{ f.rel }}"
-             data-rating="{{ f.rating }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+             data-rating="{{ f.rating }}" data-ml="{{ f.ml }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
           <span class="rate-badge"></span>
           <div class="label" title="{{ f.name }}">{{ f.label }}</div>
         </div>
@@ -129,4 +142,5 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='viewer.js') }}"></script>
+<script src="{{ url_for('static', filename='ml.js') }}"></script>
 {% endblock %}

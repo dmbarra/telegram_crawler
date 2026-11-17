@@ -303,3 +303,9 @@ input[type=number] { width: 90px; }
 tr.mg-row.ok td { color: #34d399; }
 tr.mg-row.error td { color: #f87171; }
 .fm-failed { font-size: 13px; margin: 0 0 10px; }
+
+/* ── Files Manager tools ────────────────────────────────── */
+.tools { border: 1px solid #2a2f3a; border-radius: 8px; padding: 4px 14px; margin: 10px 0 18px; }
+.tools h2 { font-size: 14px; margin: 12px 0 0; color: #9ca3af; }
+.num-input { width: 70px; background: #0f1115; border: 1px solid #2a2f3a; color: #e5e7eb;
+             padding: 5px 8px; border-radius: 6px; }

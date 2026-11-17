@@ -66,7 +66,31 @@ def file_item(row) -> dict:
         "size_str": fmt_size(row["size"] or 0),
         "date": (row["at"] or "")[:16].replace("T", " "),
         "rating": row["rating"] or "",
+        "info": media_info_str(row["width"], row["height"], row["duration"]),
+        "ml": ml_str(row["analyzed"], row["face_count"], row["ml_error"]),
     }
+
+
+def ml_str(analyzed, face_count, error) -> str:
+    if not analyzed:
+        return ""
+    if error:
+        return "Analysis failed"
+    return f"Analyzed · {face_count} face{'s' if face_count != 1 else ''}"
+
+
+def fmt_duration(seconds: float) -> str:
+    s = round(seconds)
+    return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+
+
+def media_info_str(width, height, duration) -> str:
+    parts = []
+    if width and height:
+        parts.append(f"{width}×{height}")
+    if duration:
+        parts.append(fmt_duration(duration))
+    return " · ".join(parts)
 
 
 def sort_channels(cards: list, sort_key: str) -> list:

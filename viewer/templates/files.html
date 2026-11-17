@@ -26,6 +26,22 @@
   <ul class="fm-failed error" id="fm-failed"></ul>
 
   {% if not channel %}
+    <section class="tools">
+      <h2>Media info</h2>
+      <div class="row">
+        <button class="btn" id="scan-start">Scan new files</button>
+        <span class="msg" id="scan-msg">Reads size, length and a picture hash with ffprobe. Runs on this server only.</span>
+      </div>
+      <h2>Rules</h2>
+      <div class="row">
+        <label>Videos shorter than
+          <input type="number" id="short-sec" value="5" min="1" max="3600" step="1" class="num-input"> s</label>
+        <button class="btn" id="short-find">Find</button>
+        <button class="btn danger" id="short-apply" disabled>Mark all as To delete</button>
+        <span class="msg" id="short-msg">Only scanned videos are checked.</span>
+      </div>
+    </section>
+
     {% if not channels %}
       <div class="empty">No files in the database yet.</div>
     {% else %}
@@ -51,7 +67,7 @@
     <p class="muted">{{ total }} file{% if total != 1 %}s{% endif %}{% if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}</p>
     <table class="fm">
       <thead><tr><th><input type="checkbox" id="fm-all" title="Select all on this page"></th>
-        <th>File</th><th>Caption</th><th>Type</th><th class="num">Size</th><th>Date</th></tr></thead>
+        <th>File</th><th>Caption</th><th>Type</th><th>Info</th><th class="num">Size</th><th>Date</th></tr></thead>
       <tbody>
         {% for e in entries %}
           <tr>
@@ -59,6 +75,7 @@
             <td class="name"><a href="/media?p={{ e.rel|urlencode }}" target="_blank" rel="noopener">{{ e.name }}</a></td>
             <td class="muted">{{ e.caption[:80] }}</td>
             <td class="muted">{{ e.kind }}</td>
+            <td class="muted">{{ e.info }}</td>
             <td class="num">{{ e.size_str }}</td>
             <td class="muted">{{ e.date }}</td>
           </tr>
@@ -80,6 +97,73 @@
 
 {% block scripts %}
 <script>
+const post = async (url, body) => {
+  const resp = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
+  return data;
+};
+const setMsg = (el, text, cls) => { el.textContent = text; el.className = "msg " + (cls || ""); };
+
+const scanBtn = document.getElementById("scan-start");
+if (scanBtn) {
+  const scanMsg = document.getElementById("scan-msg");
+  let wasRunning = false;
+  const showScan = async () => {
+    try {
+      const s = await (await fetch("/api/scan/status")).json();
+      scanBtn.disabled = s.running;
+      if (s.running) {
+        setMsg(scanMsg, `Scanning… ${s.done} of ${s.total} · ${s.errors} error(s)`);
+        wasRunning = true;
+        setTimeout(showScan, 1500);
+        return;
+      }
+      const left = s.files - s.scanned;
+      const base = `${s.scanned} of ${s.files} files scanned · ${left} new · ${s.failed} could not be read`;
+      if (wasRunning) setMsg(scanMsg, `Done: scanned ${s.done} file(s), ${s.errors} error(s). ${base}`, s.errors ? "error" : "ok");
+      else setMsg(scanMsg, base);
+      scanBtn.disabled = left === 0;
+    } catch (err) {
+      setMsg(scanMsg, "Could not read scan status: " + err.message, "error");
+    }
+  };
+  scanBtn.addEventListener("click", async () => {
+    scanBtn.disabled = true;
+    try { await post("/api/scan/start", {}); showScan(); }
+    catch (err) { setMsg(scanMsg, "Scan not started: " + err.message, "error"); scanBtn.disabled = false; }
+  });
+  showScan();
+
+  const sec = document.getElementById("short-sec");
+  const findBtn = document.getElementById("short-find");
+  const applyBtn = document.getElementById("short-apply");
+  const shortMsg = document.getElementById("short-msg");
+  const rule = async (apply) => {
+    findBtn.disabled = applyBtn.disabled = true;
+    try {
+      const d = await post("/api/rules/short-videos", { seconds: Number(sec.value), apply });
+      if (apply) {
+        setMsg(shortMsg, `Marked ${d.count} video(s) as To delete. ${d.marked} file(s) are now on the To delete page.`, "ok");
+      } else {
+        setMsg(shortMsg, `${d.count} video(s) under ${sec.value} s, ${d.size}, not marked yet.`, d.count ? "" : "ok");
+        applyBtn.disabled = !d.count;
+      }
+    } catch (err) {
+      setMsg(shortMsg, "Failed: " + err.message, "error");
+    }
+    findBtn.disabled = false;
+  };
+  findBtn.addEventListener("click", () => rule(false));
+  sec.addEventListener("input", () => { applyBtn.disabled = true; });
+  applyBtn.addEventListener("click", () => {
+    if (confirm(`Mark every video shorter than ${sec.value} s as To delete?\n\nNothing is deleted yet. You can review them on the To delete page.`)) rule(true);
+    else applyBtn.disabled = false;
+  });
+}
+
 const btn = document.getElementById("fm-delete");
 const all = document.getElementById("fm-all");
 const msg = document.getElementById("fm-msg");
