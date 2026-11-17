@@ -9,6 +9,7 @@ from flask import (
     send_file, send_from_directory,
 )
 from src.db import RATINGS
+from src.faces import MIN_SCORES, SAME_PERSON, same_person
 from viewer import config
 from viewer.download_routes import _json_body
 from viewer.helpers import (
@@ -24,6 +25,8 @@ VIEW_KINDS = ("images", "videos", "audio")
 TYPES = {"": "", "image": "images", "video": "videos", "audio": "audio"}
 RATING_FILTERS = {"": "All ratings", "good": "Good", "bad": "Not good",
                   "delete": "To delete", "none": "Not rated"}
+FACE_FILTER_LABELS = {"": "All (faces)", "yes": "With faces", "no": "No faces",
+                      "none": "Not analyzed"}
 
 
 def _library():
@@ -80,6 +83,9 @@ def channel_page(channel):
     rating = request.args.get("rating", "")
     if rating not in RATING_FILTERS:
         rating = ""
+    faces = request.args.get("faces", "")
+    if faces not in FACE_FILTER_LABELS:
+        faces = ""
     q = request.args.get("q", "").strip().lower()
     sort_key = _normalize_sort(request.args.get("sort", DEFAULT_SORT))
     per = _per_page()
@@ -88,25 +94,55 @@ def channel_page(channel):
     except ValueError:
         page = 1
 
-    _, total = lib.channel_files(channel, VIEW_KINDS, TYPES[kind], q, limit=0, rating=rating)
-    pages = max(1, math.ceil(total / per))
-    page = min(max(page, 1), pages)
-    rows, _ = lib.channel_files(channel, VIEW_KINDS, TYPES[kind], q, sort_key,
-                                limit=per, offset=(page - 1) * per, rating=rating)
+    # Same-person mode: every image with a face close to this one, best first.
+    # The other filters do not apply in this mode.
+    face_id = request.args.get("face", type=int)
+    min_score = request.args.get("min", SAME_PERSON, type=float)
+    if min_score not in MIN_SCORES:
+        min_score = SAME_PERSON
+    face_query = None
+    scores = {}
+    if face_id is not None:
+        query = lib.face(face_id)
+        if not query:
+            abort(404)
+        matches = same_person(query["vector"], lib.channel_faces(channel), min_score)
+        total = len(matches)
+        pages = max(1, math.ceil(total / per))
+        page = min(max(page, 1), pages)
+        page_matches = matches[(page - 1) * per:page * per]
+        rows = lib.kept_rows([m[0] for m in page_matches])
+        scores = {m[0]: m[1] for m in page_matches}
+        face_query = {"id": face_id, "name": query["path"].rsplit("/", 1)[-1], "min": min_score}
+    else:
+        _, total = lib.channel_files(channel, VIEW_KINDS, TYPES[kind], q, limit=0,
+                                     rating=rating, faces=faces)
+        pages = max(1, math.ceil(total / per))
+        page = min(max(page, 1), pages)
+        rows, _ = lib.channel_files(channel, VIEW_KINDS, TYPES[kind], q, sort_key,
+                                    limit=per, offset=(page - 1) * per, rating=rating, faces=faces)
+    files = [file_item(r) for r in rows]
+    for f in files:
+        f["score"] = scores.get(f["rel"])
 
     resp = make_response(render_template(
         "channel.html",
         channel=channel,
         channel_title=lib.channel_titles().get(str(channel), f"Channel {channel}"),
-        files=[file_item(r) for r in rows],
+        files=files,
         total=total,
         channel_total=channel_total,
         page=page,
         pages=pages,
         window=page_window(page, pages),
         first_index=(page - 1) * per + 1,
-        url_args={k: v for k, v in {"type": kind, "sort": sort_key, "q": q,
-                                    "rating": rating}.items() if v},
+        url_args={k: v for k, v in ({"face": face_id, "min": min_score} if face_query else
+                                    {"type": kind, "sort": sort_key, "q": q, "rating": rating,
+                                     "faces": faces}).items() if v},
+        face_query=face_query,
+        min_scores=MIN_SCORES,
+        current_faces=faces,
+        face_options=FACE_FILTER_LABELS,
         current_type=kind,
         current_rating=rating,
         rating_options=RATING_FILTERS,
@@ -121,6 +157,15 @@ def channel_page(channel):
     if "per" in request.args:
         resp.set_cookie("per_page", str(per), max_age=365 * 24 * 3600, samesite="Lax")
     return resp
+
+
+# ─── GET /api/faces?p=<path> — face boxes, in original pixels ───
+@bp.get("/api/faces")
+def face_boxes():
+    path = request.args.get("p", "")
+    if not path:
+        abort(400)
+    return jsonify(faces=[dict(r) for r in _library().face_boxes(path)])
 
 
 # ─── POST /api/rate {path, rating} — rating null clears it ──────

@@ -102,6 +102,12 @@ KEPT = """kept AS (
 
 RATINGS = ("good", "bad", "delete")
 
+FACE_FILTERS = {
+    "yes": " AND k.face_count > 0",
+    "no": " AND k.face_count = 0",
+    "none": " AND k.kind = 'images' AND k.analyzed IS NOT 1",
+}
+
 SORTS = {
     "newest": "at DESC", "oldest": "at ASC",
     "name_asc": "path ASC", "name_desc": "path DESC",
@@ -204,7 +210,7 @@ class Library:
         )
 
     def channel_files(self, channel_id: int, kinds=None, kind="", q="", sort="newest",
-                      limit=50, offset=0, rating=""):
+                      limit=50, offset=0, rating="", faces=""):
         """(rows, total) for one channel page."""
         where, args = _kinds_filter(kinds)
         where += " AND k.channel_id = ?"
@@ -220,6 +226,7 @@ class Library:
         elif rating:
             where += " AND k.rating = ?"
             args.append(rating)
+        where += FACE_FILTERS.get(faces, "")
         total = self._one(f"WITH {KEPT} SELECT COUNT(*) AS n FROM kept k WHERE 1 {where}", args)["n"]
         rows = self._all(
             f"WITH {KEPT} SELECT * FROM kept k WHERE 1 {where} "
@@ -355,6 +362,28 @@ class Library:
             self._conn.executemany(
                 "INSERT INTO faces (path, x, y, w, h, score, vector) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 [(path, *f) for f in faces])
+
+    def face_boxes(self, path: str) -> list:
+        return self._all("SELECT id, x, y, w, h, score FROM faces WHERE path = ? ORDER BY x", (path,))
+
+    def face(self, face_id: int):
+        return self._one("SELECT id, path, vector FROM faces WHERE id = ?", (face_id,))
+
+    def channel_faces(self, channel_id: int) -> list:
+        """(id, path, vector) of every face in the kept files of one channel."""
+        return self._all(
+            """SELECT id, path, vector FROM faces WHERE path IN
+                   (SELECT path FROM files WHERE status = 'downloaded' AND channel_id = ?)""",
+            (channel_id,))
+
+    def kept_rows(self, paths) -> list:
+        """Kept rows for the given paths, in the same order."""
+        if not paths:
+            return []
+        marks = ",".join("?" * len(paths))
+        by_path = {r["path"]: r for r in self._all(
+            f"WITH {KEPT} SELECT * FROM kept WHERE path IN ({marks})", list(paths))}
+        return [by_path[p] for p in paths if p in by_path]
 
     # ─── channels ───────────────────────────────────────────────
     def channel_titles(self) -> dict:

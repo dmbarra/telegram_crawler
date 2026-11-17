@@ -68,6 +68,7 @@ def file_item(row) -> dict:
         "rating": row["rating"] or "",
         "info": media_info_str(row["width"], row["height"], row["duration"]),
         "ml": ml_str(row["analyzed"], row["face_count"], row["ml_error"]),
+        "face_count": row["face_count"] or 0,
     }
 
 
