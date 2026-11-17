@@ -1,32 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ channel_title }} · Media Viewer{% endblock %}
 
-{% macro pager() %}
-  {% if pages > 1 %}
-  <nav class="pager">
-    {% if page > 1 %}
-      <a class="btn" href="{{ url_for('viewer.channel_page', channel=channel, page=page - 1, **url_args) }}">‹ Prev</a>
-    {% else %}
-      <span class="btn disabled">‹ Prev</span>
-    {% endif %}
-    {% for n in window %}
-      {% if n is none %}
-        <span class="gap">…</span>
-      {% elif n == page %}
-        <span class="btn current">{{ n }}</span>
-      {% else %}
-        <a class="btn" href="{{ url_for('viewer.channel_page', channel=channel, page=n, **url_args) }}">{{ n }}</a>
-      {% endif %}
-    {% endfor %}
-    {% if page < pages %}
-      <a class="btn" href="{{ url_for('viewer.channel_page', channel=channel, page=page + 1, **url_args) }}">Next ›</a>
-    {% else %}
-      <span class="btn disabled">Next ›</span>
-    {% endif %}
-    <span class="page-of">page {{ page }} of {{ pages }}</span>
-  </nav>
-  {% endif %}
-{% endmacro %}
 
 {% block body %}
 <header>
@@ -68,7 +42,7 @@
   </div>
 </header>
 
-<main id="main" data-channel="{{ channel }}" style="--tile-size: {{ tile_size }}px;">
+<main id="main" style="--tile-size: {{ tile_size }}px;">
   {% if face_query %}
     <form class="banner" method="get">
       <input type="hidden" name="face" value="{{ face_query.id }}">
@@ -89,77 +63,15 @@
         Study source <span class="muted">(consenting patients or public dataset; allows face analysis)</span></label>
     </div>
     <div class="row">
-      <button class="btn primary" id="ml-start" disabled>Analyze new images</button>
+      <button class="btn primary" id="ml-start" disabled>Analyze new images/videos</button>
       <button class="btn" id="ml-stop" hidden>Stop</button>
       <span class="msg" id="ml-msg">Checking…</span>
     </div>
   </section>
 
-  {% if not files %}
-    <div class="empty">{% if face_query %}No image has a face this close. Try a lower score.{% else %}No files match your filters.{% endif %}</div>
-  {% endif %}
-
-  {{ pager() }}
-
-  <div class="grid">
-    {% for f in files %}
-      {% set src = "/media?p=" ~ (f.rel|urlencode) %}
-      {% if f.type == "image" %}
-        <div class="tile" data-src="{{ src }}" data-type="image" data-rel="{{ f.rel }}"
-             data-rating="{{ f.rating }}" data-ml="{{ f.ml }}" data-faces="{{ f.face_count }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
-          <span class="rate-badge"></span>
-          {% if f.score is not none %}<span class="score-badge" title="Face match score">{{ "%.2f"|format(f.score) }}</span>{% endif %}
-          <img src="{{ src }}" loading="lazy" decoding="async" alt="">
-          <div class="label" title="{{ f.name }}">{{ f.label }}</div>
-        </div>
-      {% elif f.type == "video" %}
-        <div class="tile video" data-src="{{ src }}" data-type="video" data-rel="{{ f.rel }}"
-             data-rating="{{ f.rating }}" data-ml="{{ f.ml }}" data-faces="{{ f.face_count }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
-          <span class="rate-badge"></span>
-          {% if f.score is not none %}<span class="score-badge" title="Face match score">{{ "%.2f"|format(f.score) }}</span>{% endif %}
-          <img class="thumb" src="/thumb?p={{ f.rel|urlencode }}"
-               loading="lazy" decoding="async" alt=""
-               onerror="this.remove()">
-          <div class="play-badge">▶</div>
-          <div class="label" title="{{ f.name }}">{{ f.label }}</div>
-        </div>
-      {% else %}
-        <div class="tile audio" data-src="{{ src }}" data-type="audio" data-rel="{{ f.rel }}"
-             data-rating="{{ f.rating }}" data-ml="{{ f.ml }}" data-faces="{{ f.face_count }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
-          <span class="rate-badge"></span>
-          {% if f.score is not none %}<span class="score-badge" title="Face match score">{{ "%.2f"|format(f.score) }}</span>{% endif %}
-          <div class="label" title="{{ f.name }}">{{ f.label }}</div>
-        </div>
-      {% endif %}
-    {% endfor %}
-  </div>
-
-  {{ pager() }}
+  {% include "_grid.html" %}
 </main>
 
-<div id="lb">
-  <button class="close" onclick="closeLb()" title="Close (Esc)">×</button>
-  <button class="nav prev" onclick="navLb(-1)" title="Previous (←)">‹</button>
-  <button class="nav next" onclick="navLb(1)" title="Next (→)">›</button>
-  <div class="media" id="lb-media"></div>
-  <div class="info" id="lb-info"></div>
-  <button class="btn small" id="lb-faces" hidden title="Show face boxes (F)">Show faces</button>
-  <div class="rate-bar">
-    <button class="rate good" data-rating="good" title="Good (1)">
-      <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
-      <span>Good</span>
-    </button>
-    <button class="rate bad" data-rating="bad" title="Not good (2)">
-      <svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
-      <span>Not good</span>
-    </button>
-    <button class="rate delete" data-rating="delete" title="To delete (3)">
-      <svg viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-      <span>To delete</span>
-    </button>
-  </div>
-  <div class="rate-msg" id="lb-rate-msg"></div>
-</div>
 {% endblock %}
 
 {% block scripts %}

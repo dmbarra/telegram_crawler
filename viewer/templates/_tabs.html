@@ -1,0 +1,5 @@
+<nav class="tabs">
+  <a href="{{ url_for('viewer.index') }}" class="{{ 'active' if tab == 'channels' }}">Channels</a>
+  <a href="{{ url_for('groups.groups_page', kind='look') }}" class="{{ 'active' if tab == 'look' }}">By look</a>
+  <a href="{{ url_for('groups.groups_page', kind='face') }}" class="{{ 'active' if tab == 'face' }}">By face</a>
+</nav>

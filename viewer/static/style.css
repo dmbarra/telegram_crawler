@@ -323,3 +323,12 @@ tr.mg-row.error td { color: #f87171; }
   border-radius: 999px; font-size: 12px; font-weight: 600; background: #22d3ee; color: #0f1115; }
 .banner { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 14px;
           margin: 10px 0; border: 1px solid #155e75; border-radius: 8px; color: #a5f3fc; }
+
+/* ── Viewer tabs + group cards ──────────────────────────── */
+.tabs { display: flex; gap: 4px; }
+.tabs a { padding: 6px 14px; border: 1px solid #2a2f3a; border-radius: 999px; color: #9ca3af;
+          text-decoration: none; font-size: 14px; }
+.tabs a:hover { border-color: #60a5fa; color: #e5e7eb; }
+.tabs a.active { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+.ch-card .cover.face-crop { background-repeat: no-repeat; aspect-ratio: 1; }
+.ch-card .cover.face-crop::before { content: none; }

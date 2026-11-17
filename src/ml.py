@@ -6,15 +6,21 @@ Images that already have a result from the same model are skipped.
 import base64
 import json
 import os
+import subprocess
 import threading
 import time
 import urllib.error
 import urllib.request
 
+import numpy as np
+
 from src.config import DOWNLOADS_DIR
+from src.mediainfo import FFMPEG_BIN, probe
 
 ML_URL = os.getenv("ML_URL", "http://crawler-ml:8000").rstrip("/")
 TIMEOUT = 120
+VIDEO_FRAMES = (0.1, 0.5, 0.9)      # positions in the video, as a share of its length
+SAME_FACE_IN_VIDEO = 0.6            # faces this close across frames are counted once
 
 
 class ServiceDown(Exception):
@@ -85,7 +91,7 @@ class Analyzer:
             model = health()
         except ServiceDown as e:
             return str(e)
-        todo = [r["path"] for r in self.library.ml_todo(channel_id, model)]
+        todo = [dict(r) for r in self.library.ml_todo(channel_id, model)]
         with self._lock:
             if self.running:
                 return "An analysis is already running"
@@ -111,11 +117,11 @@ class Analyzer:
     def _run(self, todo, model):
         result, message = "done", ""
         try:
-            for rel in todo:
+            for row in todo:
                 if self._stop.is_set():
                     result = "stopped"
                     break
-                ok, faces = self._one(rel, model)
+                ok, faces = self._one(row, model)
                 with self._lock:
                     self.done += 1
                     self.errors += not ok
@@ -128,21 +134,62 @@ class Analyzer:
                 self.finished_at = time.time()
                 self.result, self.message = result, message
 
-    def _one(self, rel, model) -> tuple:
-        """(ok, faces found). Raises ServiceDown so the run stops and the image is retried later."""
+    def _one(self, row, model) -> tuple:
+        """(ok, faces found). Raises ServiceDown so the run stops and the file is retried later."""
+        rel = row["path"]
         try:
-            data = (DOWNLOADS_DIR / rel).read_bytes()
-        except OSError as e:
-            self.library.save_ml_result(rel, model, error=f"cannot read file: {e}")
+            frames = (video_frames(DOWNLOADS_DIR / rel, row["duration"]) if row["kind"] == "videos"
+                      else [(DOWNLOADS_DIR / rel).read_bytes()])
+        except (OSError, subprocess.SubprocessError, ValueError) as e:
+            self.library.save_ml_result(rel, model, error=f"cannot read file: {e}"[:300])
             return False, 0
-        try:
-            out = _call("POST", "/analyze", data)
-        except ValueError as e:
-            self.library.save_ml_result(rel, model, error=str(e)[:300])
-            return False, 0
-        if out.get("model") != model:
-            raise ServiceDown("The ML service changed its model during the run. Start again.")
-        faces = [(*f["box"], f["score"], base64.b64decode(f["vector"])) for f in out["faces"]]
-        self.library.save_ml_result(rel, model, base64.b64decode(out["clip"]),
-                                    out.get("width"), out.get("height"), faces)
+        outs = []
+        for data in frames:
+            try:
+                out = _call("POST", "/analyze", data)
+            except ValueError as e:
+                self.library.save_ml_result(rel, model, error=str(e)[:300])
+                return False, 0
+            if out.get("model") != model:
+                raise ServiceDown("The ML service changed its model during the run. Start again.")
+            outs.append(out)
+        clip, faces = combine(outs)
+        self.library.save_ml_result(rel, model, clip, outs[0].get("width"), outs[0].get("height"), faces)
         return True, len(faces)
+
+
+def video_frames(path, duration) -> list:
+    """JPEG bytes of a few frames spread over the video."""
+    if not duration:
+        duration = probe(path).get("duration") or 0
+    frames = []
+    for share in VIDEO_FRAMES if duration else (0,):
+        data = subprocess.run(
+            [FFMPEG_BIN, "-v", "error", "-ss", f"{duration * share:.2f}", "-i", str(path),
+             "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"],
+            capture_output=True, timeout=60, check=True,
+        ).stdout
+        if data:
+            frames.append(data)
+    if not frames:
+        raise ValueError("no frame could be read")
+    return frames
+
+
+def _vec(b64) -> np.ndarray:
+    return np.frombuffer(base64.b64decode(b64), "<f4")
+
+
+def combine(outs) -> tuple:
+    """One image vector (mean of frames) and the faces of all frames, each person once."""
+    clip = np.mean([_vec(o["clip"]) for o in outs], axis=0)
+    clip /= np.linalg.norm(clip) or 1.0
+    faces, kept = [], []
+    for o in outs:
+        for f in o["faces"]:
+            v = _vec(f["vector"])
+            if any(float(v @ k) >= SAME_FACE_IN_VIDEO for k in kept):
+                continue
+            kept.append(v)
+            faces.append((*f["box"], f["score"], v.astype("<f4").tobytes()))
+    return clip.astype("<f4").tobytes(), faces

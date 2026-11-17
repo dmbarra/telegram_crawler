@@ -5,6 +5,7 @@
 <header>
   <a href="/" class="btn">← Home</a>
   <h1>🎬 Media Viewer</h1>
+  {% with tab='channels' %}{% include "_tabs.html" %}{% endwith %}
   <form method="get">
     <input type="search" name="q" placeholder="Search channels…" value="{{ query }}">
     <select name="sort" onchange="this.form.submit()">

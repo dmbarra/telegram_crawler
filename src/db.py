@@ -86,6 +86,34 @@ CREATE TABLE IF NOT EXISTS faces (
     vector BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_faces_path ON faces(path);
+
+-- Automatic groups. kind 'look' = CLIP image vectors, 'face' = face vectors.
+-- vsum = sum of member vectors (centroid = vsum normalized), so joins update in one step.
+CREATE TABLE IF NOT EXISTS ml_groups (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT NOT NULL CHECK (kind IN ('look', 'face')),
+    vsum       BLOB NOT NULL,
+    size       INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS look_members (
+    path     TEXT PRIMARY KEY,
+    group_id INTEGER NOT NULL,
+    score    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_look_members_group ON look_members(group_id);
+CREATE TABLE IF NOT EXISTS face_members (
+    face_id  INTEGER PRIMARY KEY,
+    group_id INTEGER NOT NULL,
+    score    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_face_members_group ON face_members(group_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 # One row per file on disk: several records can share a path (forwards, kept copies).
@@ -101,11 +129,20 @@ KEPT = """kept AS (
 )"""
 
 RATINGS = ("good", "bad", "delete")
+ML_KINDS = "('images', 'videos')"
+
+# Everything ML knows about one path; run inside a transaction.
+FORGET_ML = (
+    "DELETE FROM face_members WHERE face_id IN (SELECT id FROM faces WHERE path = ?)",
+    "DELETE FROM faces WHERE path = ?",
+    "DELETE FROM look_members WHERE path = ?",
+    "DELETE FROM ml_results WHERE path = ?",
+)
 
 FACE_FILTERS = {
     "yes": " AND k.face_count > 0",
     "no": " AND k.face_count = 0",
-    "none": " AND k.kind = 'images' AND k.analyzed IS NOT 1",
+    "none": f" AND k.kind IN {ML_KINDS} AND k.analyzed IS NOT 1",
 }
 
 SORTS = {
@@ -174,8 +211,8 @@ class Library:
             )
             self._conn.executemany("DELETE FROM ratings WHERE path = ?", [(p,) for p in paths])
             self._conn.executemany("DELETE FROM media_info WHERE path = ?", [(p,) for p in paths])
-            self._conn.executemany("DELETE FROM ml_results WHERE path = ?", [(p,) for p in paths])
-            self._conn.executemany("DELETE FROM faces WHERE path = ?", [(p,) for p in paths])
+            for sql in FORGET_ML:
+                self._conn.executemany(sql, [(p,) for p in paths])
 
     def repoint(self, old: str, new: str) -> None:
         with self._lock, self._conn:
@@ -184,8 +221,8 @@ class Library:
             self._conn.execute("UPDATE OR IGNORE ratings SET path = ? WHERE path = ?", (new, old))
             self._conn.execute("DELETE FROM ratings WHERE path = ?", (old,))
             self._conn.execute("DELETE FROM media_info WHERE path = ?", (old,))
-            self._conn.execute("DELETE FROM ml_results WHERE path = ?", (old,))
-            self._conn.execute("DELETE FROM faces WHERE path = ?", (old,))
+            for sql in FORGET_ML:
+                self._conn.execute(sql, (old,))
 
     def kept_files(self):
         return self._all(
@@ -324,10 +361,10 @@ class Library:
             self._run("DELETE FROM study_sources WHERE channel_id = ?", (channel_id,))
 
     def ml_todo(self, channel_id: int, model: str) -> list:
-        """Images of a study-source channel with no result from this model yet."""
+        """Images and videos of a study-source channel with no result from this model yet."""
         return self._all(
-            f"""WITH {KEPT} SELECT k.path FROM kept k
-                WHERE k.channel_id = ? AND k.kind = 'images'
+            f"""WITH {KEPT} SELECT k.path, k.kind, k.duration FROM kept k
+                WHERE k.channel_id = ? AND k.kind IN {ML_KINDS}
                   AND EXISTS (SELECT 1 FROM study_sources s WHERE s.channel_id = k.channel_id)
                   AND NOT EXISTS (SELECT 1 FROM ml_results r WHERE r.path = k.path AND r.model = ?)
                 ORDER BY k.at""", (channel_id, model))
@@ -342,7 +379,7 @@ class Library:
                     SUM(r.face_count) AS faces
                 FROM kept k LEFT JOIN ml_results r
                      ON r.path = k.path AND (? IS NULL OR r.model = ?)
-                WHERE k.channel_id = ? AND k.kind = 'images'""", (model, model, channel_id))
+                WHERE k.channel_id = ? AND k.kind IN {ML_KINDS}""", (model, model, channel_id))
         return {"images": row["images"], "done": row["done"], "errors": row["errors"] or 0,
                 "with_faces": row["with_faces"] or 0, "faces": row["faces"] or 0}
 
@@ -353,7 +390,8 @@ class Library:
             if not self._conn.execute(
                     "SELECT 1 FROM files WHERE path = ? AND status = 'downloaded'", (path,)).fetchone():
                 return  # deleted while it was being analyzed
-            self._conn.execute("DELETE FROM faces WHERE path = ?", (path,))
+            for sql in FORGET_ML:
+                self._conn.execute(sql, (path,))
             self._conn.execute(
                 """INSERT OR REPLACE INTO ml_results
                        (path, model, clip, width, height, face_count, error)
@@ -384,6 +422,100 @@ class Library:
         by_path = {r["path"]: r for r in self._all(
             f"WITH {KEPT} SELECT * FROM kept WHERE path IN ({marks})", list(paths))}
         return [by_path[p] for p in paths if p in by_path]
+
+    # ─── automatic groups ───────────────────────────────────────
+    def setting(self, key: str, default=None):
+        row = self._one("SELECT value FROM settings WHERE key = ?", (key,))
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value) -> None:
+        self._run("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
+
+    def group_items(self, kind: str, new_only: bool, count_only: bool = False):
+        """(item, vector) to group, oldest first: kept files of study-source channels.
+        look: item = path, vector = CLIP; face: item = face id, vector = face vector."""
+        study = """SELECT DISTINCT f.path FROM files f JOIN study_sources s ON s.channel_id = f.channel_id
+                   WHERE f.status = 'downloaded'"""
+        if kind == "look":
+            cols, order = "r.path AS item, r.clip AS vector", "ORDER BY r.processed_at, r.path"
+            sql = f"""FROM ml_results r WHERE r.clip IS NOT NULL AND r.path IN ({study})
+                      {"AND r.path NOT IN (SELECT path FROM look_members)" if new_only else ""}"""
+        else:
+            cols, order = "fc.id AS item, fc.vector", "ORDER BY fc.id"
+            sql = f"""FROM faces fc WHERE fc.path IN ({study})
+                      {"AND fc.id NOT IN (SELECT face_id FROM face_members)" if new_only else ""}"""
+        if count_only:
+            return self._one(f"SELECT COUNT(*) AS n {sql}")["n"]
+        return self._all(f"SELECT {cols} {sql} {order}")
+
+    def groups_state(self, kind: str) -> list:
+        return self._all("SELECT id, vsum, size FROM ml_groups WHERE kind = ?", (kind,))
+
+    def save_grouping(self, kind: str, groups: dict, members: list, merges: list, rebuild: bool) -> dict:
+        """Write one grouping run in a single transaction.
+        groups: {key: (vsum bytes, size)} where an int key is an existing group and a str key is new.
+        members: [(item, group key, score)]; merges: [(from id, into id)] of existing groups.
+        Returns {group key: group id}."""
+        table, col = ("look_members", "path") if kind == "look" else ("face_members", "face_id")
+        with self._lock, self._conn:
+            c = self._conn
+            if rebuild:
+                c.execute(f"DELETE FROM {table}")
+                c.execute("DELETE FROM ml_groups WHERE kind = ?", (kind,))
+            for src, dst in merges:
+                c.execute(f"UPDATE {table} SET group_id = ? WHERE group_id = ?", (dst, src))
+                c.execute("DELETE FROM ml_groups WHERE id = ?", (src,))
+            ids = {}
+            for key, (vsum, size) in groups.items():
+                if isinstance(key, int):
+                    c.execute("""UPDATE ml_groups SET vsum = ?, size = ?, updated_at = datetime('now')
+                                 WHERE id = ?""", (vsum, size, key))
+                    ids[key] = key
+                else:
+                    ids[key] = c.execute("INSERT INTO ml_groups (kind, vsum, size) VALUES (?, ?, ?)",
+                                         (kind, vsum, size)).lastrowid
+            c.executemany(f"INSERT OR REPLACE INTO {table} ({col}, group_id, score) VALUES (?, ?, ?)",
+                          [(item, ids[key], score) for item, key, score in members])
+        return ids
+
+    def group_cards(self, kind: str, min_images: int) -> list:
+        """Groups with at least `min_images` kept images, biggest first, with a cover."""
+        if kind == "look":
+            members = """SELECT m.group_id, m.path, m.score, NULL AS face_id FROM look_members m"""
+        else:
+            members = """SELECT m.group_id, fc.path, m.score, fc.id AS face_id
+                         FROM face_members m JOIN faces fc ON fc.id = m.face_id"""
+        return self._all(
+            f"""WITH {KEPT}, mem AS ({members}),
+                live AS (SELECT mem.*, k.kind AS file_kind, k.channel_id FROM mem JOIN kept k ON k.path = mem.path),
+                stats AS (SELECT group_id, COUNT(DISTINCT path) AS images,
+                                 COUNT(DISTINCT channel_id) AS channels FROM live GROUP BY group_id),
+                best AS (SELECT group_id, path, face_id, file_kind,
+                                ROW_NUMBER() OVER (PARTITION BY group_id ORDER BY score DESC) AS rn
+                         FROM live)
+                SELECT s.group_id AS id, s.images, s.channels, b.path AS cover, b.file_kind AS cover_kind,
+                       fc.x, fc.y, fc.w, fc.h, r.width, r.height
+                FROM stats s JOIN best b ON b.group_id = s.group_id AND b.rn = 1
+                LEFT JOIN faces fc ON fc.id = b.face_id
+                LEFT JOIN ml_results r ON r.path = b.path
+                WHERE s.images >= ? ORDER BY s.images DESC, s.group_id""", (min_images,))
+
+    def group_summary(self, kind: str) -> dict:
+        table = "look_members" if kind == "look" else "face_members"
+        row = self._one(f"""SELECT COUNT(*) AS items, COUNT(DISTINCT group_id) AS n_groups FROM {table}""")
+        return {"items": row["items"], "groups": row["n_groups"]}
+
+    def group_paths(self, kind: str, group_id: int) -> list:
+        """[(path, score)] of the kept files in a group, best first."""
+        if kind == "look":
+            members = "SELECT path, score FROM look_members WHERE group_id = ?"
+        else:
+            members = """SELECT fc.path, MAX(m.score) AS score FROM face_members m
+                         JOIN faces fc ON fc.id = m.face_id WHERE m.group_id = ? GROUP BY fc.path"""
+        return [(r["path"], r["score"]) for r in self._all(
+            f"""SELECT m.path, m.score FROM ({members}) m
+                WHERE EXISTS (SELECT 1 FROM files f WHERE f.path = m.path AND f.status = 'downloaded')
+                ORDER BY m.score DESC, m.path""", (group_id,))]
 
     # ─── channels ───────────────────────────────────────────────
     def channel_titles(self) -> dict:

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Group {{ gid }} · {{ titles[kind] }} · Media Viewer{% endblock %}
+
+{% block body %}
+<header>
+  <a href="{{ url_for('groups.groups_page', kind=kind) }}" class="btn">← {{ titles[kind] }}</a>
+  <h1>Group {{ gid }} <span class="muted">{{ titles[kind]|lower }}</span></h1>
+  <div class="stats">
+    {% if total %}{{ first_index }}–{{ first_index + files|length - 1 }} of {% endif %}{{ total }}
+    file{% if total != 1 %}s{% endif %} · best match first
+  </div>
+</header>
+
+<main id="main" style="--tile-size: {{ tile_size }}px;">
+  {% include "_grid.html" %}
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='viewer.js') }}"></script>
+{% endblock %}
