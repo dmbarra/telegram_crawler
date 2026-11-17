@@ -205,7 +205,7 @@ async function drawFaces(tile) {
   }
   // Still the same image, and the user did not hide the boxes meanwhile?
   if (allTiles()[currentIdx] !== tile || !facesShown || !img.naturalWidth) return;
-  const channel = document.getElementById("main").dataset.channel;
+  const channel = tile.dataset.channel;
   wrap.querySelectorAll(".face-box").forEach((b) => b.remove());
   faces.forEach((f, n) => {
     const box = document.createElement("button");

@@ -1,4 +1,6 @@
 """Small, side-effect-free helpers."""
+from urllib.parse import quote
+
 CHANNEL_SORTS = {
     "recent": "Newest download",
     "name":   "Name A → Z",
@@ -69,6 +71,7 @@ def file_item(row) -> dict:
         "info": media_info_str(row["width"], row["height"], row["duration"]),
         "ml": ml_str(row["analyzed"], row["face_count"], row["ml_error"]),
         "face_count": row["face_count"] or 0,
+        "channel": row["channel_id"],
     }
 
 
@@ -113,3 +116,28 @@ def page_window(page: int, pages: int, radius: int = 2) -> list:
         out.append(n)
         prev = n
     return out
+
+def _face_crop(row) -> str:
+    """CSS background that shows a square around the face, from the full image."""
+    W, H = row["width"], row["height"]
+    if not (W and H and row["w"]):
+        return ""
+    side = min(max(row["w"], row["h"]) * 1.6, W, H)
+    left = min(max(row["x"] + row["w"] / 2 - side / 2, 0), W - side)
+    top = min(max(row["y"] + row["h"] / 2 - side / 2, 0), H - side)
+    px = left / (W - side) * 100 if W > side else 0
+    py = top / (H - side) * 100 if H > side else 0
+    return (f"background-size: {W / side * 100:.1f}% {H / side * 100:.1f}%; "
+            f"background-position: {px:.1f}% {py:.1f}%;")
+
+
+def group_card(row, kind: str) -> dict:
+    is_video = row["cover_kind"] == "videos"
+    src = ("/thumb?p=" if is_video else "/media?p=") + quote(row["cover"])
+    return {
+        "id": row["id"],
+        "images": row["images"],
+        "channels": row["channels"],
+        "src": src,
+        "crop": _face_crop(row) if kind == "face" else "",
+    }

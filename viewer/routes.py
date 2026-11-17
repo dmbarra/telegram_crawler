@@ -124,6 +124,9 @@ def channel_page(channel):
     files = [file_item(r) for r in rows]
     for f in files:
         f["score"] = scores.get(f["rel"])
+    url_args = {k: v for k, v in ({"face": face_id, "min": min_score} if face_query else
+                                  {"type": kind, "sort": sort_key, "q": q, "rating": rating,
+                                   "faces": faces}).items() if v}
 
     resp = make_response(render_template(
         "channel.html",
@@ -136,10 +139,11 @@ def channel_page(channel):
         pages=pages,
         window=page_window(page, pages),
         first_index=(page - 1) * per + 1,
-        url_args={k: v for k, v in ({"face": face_id, "min": min_score} if face_query else
-                                    {"type": kind, "sort": sort_key, "q": q, "rating": rating,
-                                     "faces": faces}).items() if v},
         face_query=face_query,
+        pager_endpoint="viewer.channel_page",
+        pager_args={"channel": channel, **url_args},
+        empty_text=("No image has a face this close. Try a lower score." if face_query
+                    else "No files match your filters."),
         min_scores=MIN_SCORES,
         current_faces=faces,
         face_options=FACE_FILTER_LABELS,

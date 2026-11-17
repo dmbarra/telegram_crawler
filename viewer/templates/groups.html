@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ titles[kind] }} · Media Viewer{% endblock %}
+
+{% block body %}
+<header>
+  <a href="/" class="btn">← Home</a>
+  <h1>Media Viewer</h1>
+  {% with tab=kind %}{% include "_tabs.html" %}{% endwith %}
+</header>
+
+<main id="main">
+  <section class="tools" id="grp-box" data-kind="{{ kind }}">
+    <h2>Automatic groups {{ titles[kind]|lower }}</h2>
+    <div class="row">
+      <button class="btn primary" id="grp-new" disabled>Group new</button>
+      <button class="btn" id="grp-rebuild" disabled>Rebuild all</button>
+      <label>Tightness
+        <select id="grp-level">
+          {% for n, label, value in levels %}
+            <option value="{{ n }}" {% if n == level %}selected{% endif %}>{{ label }} ({{ value }})</option>
+          {% endfor %}
+        </select></label>
+    </div>
+    <div class="row"><span class="msg" id="grp-msg">Checking…</span></div>
+    <p class="muted">Only analyzed files of Study source channels are grouped. Group new only
+      looks at files that are not in a group yet.</p>
+  </section>
+
+  {% if not cards %}
+    <div class="empty">No groups yet. Analyze a Study source channel, then press Group new.</div>
+  {% endif %}
+
+  <div class="ch-cards">
+    {% for g in cards %}
+      <a class="ch-card" href="{{ url_for('groups.group_page', kind=kind, gid=g.id) }}">
+        {% if g.crop %}
+          <div class="cover face-crop" style="background-image: url('{{ g.src }}'); {{ g.crop }}"></div>
+        {% else %}
+          <div class="cover"><img src="{{ g.src }}" loading="lazy" decoding="async" alt="" onerror="this.remove()"></div>
+        {% endif %}
+        <div class="body">
+          <h2>Group {{ g.id }}</h2>
+          <div class="meta">{{ g.images }} file{% if g.images != 1 %}s{% endif %} ·
+            {{ g.channels }} channel{% if g.channels != 1 %}s{% endif %}</div>
+        </div>
+      </a>
+    {% endfor %}
+  </div>
+
+  {% if hidden %}
+    <p class="muted">{{ hidden }} small group{% if hidden != 1 %}s{% endif %} (under {{ min_images }} files) hidden.
+      <a href="?all=1">Show all</a></p>
+  {% elif show_all %}
+    <p class="muted"><a href="?">Hide small groups</a></p>
+  {% endif %}
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='groups.js') }}"></script>
+{% endblock %}

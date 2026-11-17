@@ -16,6 +16,7 @@ from src.db import Library
 from src.dedup import find_duplicates
 from src.discover import Discovery
 from src.mediainfo import Scanner
+from src.groups import Grouper
 from src.ml import Analyzer
 from src.progress import Progress
 from src.runner import MEDIA_LABELS, build_filter, fetch_channels, normalize_entity, run_job
@@ -33,6 +34,7 @@ class TelegramService:
         self.discovery = Discovery(self)
         self.scanner = Scanner(self.library)
         self.analyzer = Analyzer(self.library)
+        self.grouper = Grouper(self.library)
         self._on_job_done = on_job_done
         self._client = None
         self._job = None

@@ -22,7 +22,7 @@
 
   function summary(c) {
     const left = c.images - c.done;
-    return `${c.done} of ${c.images} images analyzed · ${left} new · ${c.errors} error(s) · ` +
+    return `${c.done} of ${c.images} images/videos analyzed · ${left} new · ${c.errors} error(s) · ` +
            `${c.with_faces} image(s) with faces (${c.faces} faces)`;
   }
 
