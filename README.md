@@ -44,7 +44,8 @@ See `.env.example` for the full list.
 - **Data folder** — the app's own files:
   - `<SESSION_NAME>.session` — Telegram login
   - `library.db` — SQLite: what was downloaded (and what you deleted), file fingerprints,
-    captions, ratings, channels you added on the Download page, and when you added or removed them
+    captions, ratings, media info, ML results (image and face vectors) for study-source channels,
+    channels you added on the Download page, and when you added or removed them
   - `join_log.json`, `invites.json` — Discover page history
   - `.thumb_cache/` — video thumbnails
 
@@ -105,6 +106,44 @@ Then start it again with the **Run** command. Media and data are safe: they live
 ```sh
 podman logs -f telegram-crawler
 podman restart telegram-crawler
+```
+
+### ML analysis (optional)
+
+A separate container, `crawler-ml`, runs the models (CLIP, YuNet + SFace faces).
+It has no volumes and no internet: it only sees the images the app sends it, and
+the app saves the results in `library.db`. Images already analyzed with the same
+model are skipped.
+
+Create the internal network (once):
+
+```sh
+podman network create --internal crawler-ml-net
+```
+
+Build and run the ML container:
+
+```sh
+cd /srv/disk2/telegram_crawler && podman build -t crawler-ml ml/
+```
+
+```sh
+podman run -d --name crawler-ml --network crawler-ml-net --read-only --tmpfs /tmp --cap-drop=ALL --security-opt no-new-privileges crawler-ml
+```
+
+Connect the app to it (again after each time you recreate the app container):
+
+```sh
+podman network connect crawler-ml-net telegram-crawler
+```
+
+In the Viewer, open a channel, turn on **Study source**, then press **Analyze new images**.
+Only turn it on for consenting patients or public medical datasets.
+
+Test script (prints results, saves nothing), on one folder:
+
+```sh
+podman run --rm --network=none --read-only --tmpfs /tmp --cap-drop=ALL --userns=keep-id:uid=1000,gid=1000 -v /srv/disk2/telegram_downloads/<channel id>/images:/images:ro,z crawler-ml ml_test.py faces /images
 ```
 
 ## Other ways to run

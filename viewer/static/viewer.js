@@ -35,7 +35,7 @@ function openLb(i) {
   currentIdx = i;
 
   const el = all[i];
-  const { src, type, name, size } = el.dataset;
+  const { src, type, name, size, ml } = el.dataset;
 
   // CRITICAL: abort the previous video BEFORE creating the new one
   cleanupMedia();
@@ -45,7 +45,10 @@ function openLb(i) {
   if (type === "image") {
     const img = document.createElement("img");
     img.src = src; img.decoding = "async";
-    media.appendChild(img);
+    const wrap = document.createElement("div");
+    wrap.className = "face-wrap";
+    wrap.appendChild(img);
+    media.appendChild(wrap);
   } else if (type === "video") {
     const v = document.createElement("video");
     v.preload = "metadata";          // ← only fetch headers, not the whole file
@@ -65,12 +68,18 @@ function openLb(i) {
   const info = document.getElementById("lb-info");
   const pos = document.createElement("b");
   pos.textContent = `${i + 1}/${all.length}`;
-  info.replaceChildren(pos, ` · ${name} · ${size}`);
+  info.replaceChildren(pos, ` · ${name} · ${size}${ml ? " · " + ml : ""}`);
   const dl = document.createElement("a");
   dl.href = src + "&download=1";
   dl.textContent = "⬇ download";
   dl.setAttribute("download", "");
   info.appendChild(dl);
+
+  const faceCount = Number(el.dataset.faces || 0);
+  const facesBtn = document.getElementById("lb-faces");
+  facesBtn.hidden = !(type === "image" && faceCount > 0);
+  facesBtn.textContent = `${facesShown ? "Hide" : "Show"} faces (${faceCount})`;
+  if (facesShown && !facesBtn.hidden) drawFaces(el);
 
   showRating(el.dataset.rating);
   setRateMsg("", "");
@@ -94,6 +103,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "ArrowLeft") navLb(-1);
   if (e.key === "ArrowRight") navLb(1);
   if (RATING_KEYS[e.key]) rate(RATING_KEYS[e.key]);
+  if (e.key === "f" || e.key === "F") toggleFaces();
 });
 
 document.getElementById("lb").addEventListener("click", (e) => {
@@ -165,3 +175,55 @@ document.querySelector("#lb .rate-bar").addEventListener("click", (e) => {
   const b = e.target.closest(".rate");
   if (b) rate(b.dataset.rating);
 });
+
+// ── Face boxes: click one to see every image of that person ──
+let facesShown = false;
+
+function toggleFaces() {
+  const btn = document.getElementById("lb-faces");
+  const tile = allTiles()[currentIdx];
+  if (btn.hidden || !tile) return;
+  facesShown = !facesShown;
+  btn.textContent = `${facesShown ? "Hide" : "Show"} faces (${tile.dataset.faces})`;
+  if (facesShown) drawFaces(tile);
+  else document.querySelectorAll("#lb .face-box").forEach((b) => b.remove());
+}
+
+async function drawFaces(tile) {
+  const wrap = document.querySelector("#lb .face-wrap");
+  const img = wrap && wrap.querySelector("img");
+  if (!img) return;
+  let faces;
+  try {
+    const resp = await fetch("/api/faces?p=" + encodeURIComponent(tile.dataset.rel));
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    faces = (await resp.json()).faces;
+    if (!img.complete) await new Promise((ok) => img.addEventListener("load", ok, { once: true }));
+  } catch (err) {
+    setRateMsg("Could not load faces: " + err.message, "error");
+    return;
+  }
+  // Still the same image, and the user did not hide the boxes meanwhile?
+  if (allTiles()[currentIdx] !== tile || !facesShown || !img.naturalWidth) return;
+  const channel = document.getElementById("main").dataset.channel;
+  wrap.querySelectorAll(".face-box").forEach((b) => b.remove());
+  faces.forEach((f, n) => {
+    const box = document.createElement("button");
+    box.className = "face-box";
+    box.style.left = `${(f.x / img.naturalWidth) * 100}%`;
+    box.style.top = `${(f.y / img.naturalHeight) * 100}%`;
+    box.style.width = `${(f.w / img.naturalWidth) * 100}%`;
+    box.style.height = `${(f.h / img.naturalHeight) * 100}%`;
+    box.title = `Face ${n + 1} · detection ${f.score.toFixed(2)} · click: same person`;
+    const tag = document.createElement("span");
+    tag.textContent = n + 1;
+    box.appendChild(tag);
+    box.addEventListener("click", (e) => {
+      e.stopPropagation();
+      location.href = `/viewer/${channel}?face=${f.id}`;
+    });
+    wrap.appendChild(box);
+  });
+}
+
+document.getElementById("lb-faces").addEventListener("click", toggleFaces);

@@ -61,6 +61,35 @@ def files_page():
         window=page_window(page, pages), current_sort=sort_key, sort_options=FILE_SORTS, **common)
 
 
+@bp.get("/api/scan/status")
+def scan_status():
+    return jsonify(current_app.extensions["telegram"].scanner.snapshot())
+
+
+@bp.post("/api/scan/start")
+def scan_start():
+    _json_body()
+    err = current_app.extensions["telegram"].scanner.start()
+    if err:
+        return jsonify(error=err), 409
+    return jsonify(ok=True)
+
+
+@bp.post("/api/rules/short-videos")
+def short_videos():
+    """Find videos shorter than `seconds`; with apply=true, mark them all To delete."""
+    body = _json_body()
+    seconds = body.get("seconds")
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 < seconds <= 3600:
+        return jsonify(error="Seconds must be a number from 1 to 3600"), 400
+    lib = _library()
+    rows = lib.short_videos(seconds)
+    if body.get("apply") is True:
+        lib.mark_to_delete([r["path"] for r in rows])
+    return jsonify(count=len(rows), size=fmt_size(sum(r["size"] or 0 for r in rows)),
+                   applied=body.get("apply") is True, marked=lib.marked_summary()["count"])
+
+
 @bp.route("/files/marked")
 def marked_page():
     lib = _library()

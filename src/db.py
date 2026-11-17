@@ -48,18 +48,65 @@ CREATE TABLE IF NOT EXISTS ratings (
     rating   TEXT NOT NULL CHECK (rating IN ('good', 'bad', 'delete')),
     rated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS media_info (
+    path       TEXT PRIMARY KEY,
+    width      INTEGER,
+    height     INTEGER,
+    duration   REAL,
+    has_audio  INTEGER,
+    codec      TEXT,
+    phash      TEXT,
+    error      TEXT,
+    scanned_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS study_sources (
+    channel_id INTEGER PRIMARY KEY,
+    since      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Vectors are float32 little-endian BLOBs, normalized (cosine = dot product).
+CREATE TABLE IF NOT EXISTS ml_results (
+    path         TEXT PRIMARY KEY,
+    model        TEXT NOT NULL,
+    clip         BLOB,
+    width        INTEGER,
+    height       INTEGER,
+    face_count   INTEGER,
+    error        TEXT,
+    processed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS faces (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    path   TEXT NOT NULL,
+    x REAL, y REAL, w REAL, h REAL,
+    score  REAL,
+    vector BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_faces_path ON faces(path);
 """
 
 # One row per file on disk: several records can share a path (forwards, kept copies).
 KEPT = """kept AS (
     SELECT f.path, MIN(f.channel_id) AS channel_id, MAX(f.kind) AS kind, MAX(f.size) AS size,
            MAX(f.caption) AS caption, MIN(COALESCE(f.msg_date, f.downloaded_at)) AS at,
-           MAX(r.rating) AS rating
-    FROM files f LEFT JOIN ratings r ON r.path = f.path
+           MAX(r.rating) AS rating, MAX(m.width) AS width, MAX(m.height) AS height,
+           MAX(m.duration) AS duration, MAX(ml.path IS NOT NULL) AS analyzed,
+           MAX(ml.face_count) AS face_count, MAX(ml.error) AS ml_error
+    FROM files f LEFT JOIN ratings r ON r.path = f.path LEFT JOIN media_info m ON m.path = f.path
+         LEFT JOIN ml_results ml ON ml.path = f.path
     WHERE f.status = 'downloaded' AND f.channel_id IS NOT NULL GROUP BY f.path
 )"""
 
 RATINGS = ("good", "bad", "delete")
+
+FACE_FILTERS = {
+    "yes": " AND k.face_count > 0",
+    "no": " AND k.face_count = 0",
+    "none": " AND k.kind = 'images' AND k.analyzed IS NOT 1",
+}
 
 SORTS = {
     "newest": "at DESC", "oldest": "at ASC",
@@ -126,6 +173,9 @@ class Library:
                 [(p,) for p in paths],
             )
             self._conn.executemany("DELETE FROM ratings WHERE path = ?", [(p,) for p in paths])
+            self._conn.executemany("DELETE FROM media_info WHERE path = ?", [(p,) for p in paths])
+            self._conn.executemany("DELETE FROM ml_results WHERE path = ?", [(p,) for p in paths])
+            self._conn.executemany("DELETE FROM faces WHERE path = ?", [(p,) for p in paths])
 
     def repoint(self, old: str, new: str) -> None:
         with self._lock, self._conn:
@@ -133,6 +183,9 @@ class Library:
             # The kept copy keeps its own rating if it has one.
             self._conn.execute("UPDATE OR IGNORE ratings SET path = ? WHERE path = ?", (new, old))
             self._conn.execute("DELETE FROM ratings WHERE path = ?", (old,))
+            self._conn.execute("DELETE FROM media_info WHERE path = ?", (old,))
+            self._conn.execute("DELETE FROM ml_results WHERE path = ?", (old,))
+            self._conn.execute("DELETE FROM faces WHERE path = ?", (old,))
 
     def kept_files(self):
         return self._all(
@@ -157,7 +210,7 @@ class Library:
         )
 
     def channel_files(self, channel_id: int, kinds=None, kind="", q="", sort="newest",
-                      limit=50, offset=0, rating=""):
+                      limit=50, offset=0, rating="", faces=""):
         """(rows, total) for one channel page."""
         where, args = _kinds_filter(kinds)
         where += " AND k.channel_id = ?"
@@ -173,6 +226,7 @@ class Library:
         elif rating:
             where += " AND k.rating = ?"
             args.append(rating)
+        where += FACE_FILTERS.get(faces, "")
         total = self._one(f"WITH {KEPT} SELECT COUNT(*) AS n FROM kept k WHERE 1 {where}", args)["n"]
         rows = self._all(
             f"WITH {KEPT} SELECT * FROM kept k WHERE 1 {where} "
@@ -214,10 +268,122 @@ class Library:
                 FROM kept k LEFT JOIN channels c ON c.id = k.channel_id
                 WHERE k.rating = 'delete' ORDER BY title, k.at DESC""")
 
+    def mark_to_delete(self, paths) -> None:
+        with self._lock, self._conn:
+            self._conn.executemany(
+                """INSERT INTO ratings (path, rating) VALUES (?, 'delete')
+                   ON CONFLICT (path) DO UPDATE SET rating = 'delete', rated_at = datetime('now')""",
+                [(p,) for p in paths],
+            )
+
     def marked_summary(self) -> dict:
         row = self._one(f"WITH {KEPT} SELECT COUNT(*) AS n, SUM(size) AS size "
                         "FROM kept WHERE rating = 'delete'")
         return {"count": row["n"], "size": row["size"] or 0}
+
+    # ─── media info ─────────────────────────────────────────────
+    def unscanned(self) -> list:
+        return self._all(
+            f"""WITH {KEPT} SELECT k.path, k.kind FROM kept k
+                WHERE k.kind IN ('images', 'videos', 'audio')
+                  AND NOT EXISTS (SELECT 1 FROM media_info m WHERE m.path = k.path)""")
+
+    def save_media_info(self, path, width, height, duration, has_audio, codec, phash, error) -> None:
+        self._run(
+            """INSERT OR REPLACE INTO media_info
+                   (path, width, height, duration, has_audio, codec, phash, error)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (path, width, height, duration, has_audio, codec, phash, error),
+        )
+
+    def media_info_summary(self) -> dict:
+        row = self._one(
+            f"""WITH {KEPT} SELECT
+                    COUNT(*) AS total,
+                    SUM(EXISTS (SELECT 1 FROM media_info m WHERE m.path = k.path)) AS scanned,
+                    SUM(EXISTS (SELECT 1 FROM media_info m WHERE m.path = k.path
+                                AND m.error IS NOT NULL)) AS failed
+                FROM kept k WHERE k.kind IN ('images', 'videos', 'audio')""")
+        return {"files": row["total"], "scanned": row["scanned"] or 0, "failed": row["failed"] or 0}
+
+    def short_videos(self, seconds: float) -> list:
+        """Kept videos shorter than `seconds` that are not marked to delete yet."""
+        return self._all(
+            f"""WITH {KEPT} SELECT path, size, duration FROM kept
+                WHERE kind = 'videos' AND duration IS NOT NULL AND duration < ?
+                  AND rating IS NOT 'delete'""", (seconds,))
+
+    # ─── study sources + ML results ─────────────────────────────
+    def is_study_source(self, channel_id: int) -> bool:
+        return self._one("SELECT 1 FROM study_sources WHERE channel_id = ?", (channel_id,)) is not None
+
+    def set_study_source(self, channel_id: int, on: bool) -> None:
+        if on:
+            self._run("INSERT OR IGNORE INTO study_sources (channel_id) VALUES (?)", (channel_id,))
+        else:
+            self._run("DELETE FROM study_sources WHERE channel_id = ?", (channel_id,))
+
+    def ml_todo(self, channel_id: int, model: str) -> list:
+        """Images of a study-source channel with no result from this model yet."""
+        return self._all(
+            f"""WITH {KEPT} SELECT k.path FROM kept k
+                WHERE k.channel_id = ? AND k.kind = 'images'
+                  AND EXISTS (SELECT 1 FROM study_sources s WHERE s.channel_id = k.channel_id)
+                  AND NOT EXISTS (SELECT 1 FROM ml_results r WHERE r.path = k.path AND r.model = ?)
+                ORDER BY k.at""", (channel_id, model))
+
+    def ml_summary(self, channel_id: int, model=None) -> dict:
+        """Counts for one channel; with a model, only results from that model count as done."""
+        row = self._one(
+            f"""WITH {KEPT} SELECT COUNT(*) AS images,
+                    COUNT(r.path) AS done,
+                    SUM(r.error IS NOT NULL) AS errors,
+                    SUM(r.face_count > 0) AS with_faces,
+                    SUM(r.face_count) AS faces
+                FROM kept k LEFT JOIN ml_results r
+                     ON r.path = k.path AND (? IS NULL OR r.model = ?)
+                WHERE k.channel_id = ? AND k.kind = 'images'""", (model, model, channel_id))
+        return {"images": row["images"], "done": row["done"], "errors": row["errors"] or 0,
+                "with_faces": row["with_faces"] or 0, "faces": row["faces"] or 0}
+
+    def save_ml_result(self, path, model, clip=None, width=None, height=None, faces=(),
+                       error=None) -> None:
+        """Replace the result for one image. faces: [(x, y, w, h, score, vector bytes)]."""
+        with self._lock, self._conn:
+            if not self._conn.execute(
+                    "SELECT 1 FROM files WHERE path = ? AND status = 'downloaded'", (path,)).fetchone():
+                return  # deleted while it was being analyzed
+            self._conn.execute("DELETE FROM faces WHERE path = ?", (path,))
+            self._conn.execute(
+                """INSERT OR REPLACE INTO ml_results
+                       (path, model, clip, width, height, face_count, error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (path, model, clip, width, height, None if error else len(faces), error))
+            self._conn.executemany(
+                "INSERT INTO faces (path, x, y, w, h, score, vector) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [(path, *f) for f in faces])
+
+    def face_boxes(self, path: str) -> list:
+        return self._all("SELECT id, x, y, w, h, score FROM faces WHERE path = ? ORDER BY x", (path,))
+
+    def face(self, face_id: int):
+        return self._one("SELECT id, path, vector FROM faces WHERE id = ?", (face_id,))
+
+    def channel_faces(self, channel_id: int) -> list:
+        """(id, path, vector) of every face in the kept files of one channel."""
+        return self._all(
+            """SELECT id, path, vector FROM faces WHERE path IN
+                   (SELECT path FROM files WHERE status = 'downloaded' AND channel_id = ?)""",
+            (channel_id,))
+
+    def kept_rows(self, paths) -> list:
+        """Kept rows for the given paths, in the same order."""
+        if not paths:
+            return []
+        marks = ",".join("?" * len(paths))
+        by_path = {r["path"]: r for r in self._all(
+            f"WITH {KEPT} SELECT * FROM kept WHERE path IN ({marks})", list(paths))}
+        return [by_path[p] for p in paths if p in by_path]
 
     # ─── channels ───────────────────────────────────────────────
     def channel_titles(self) -> dict:

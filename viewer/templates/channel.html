@@ -44,6 +44,11 @@
         <option value="{{ key }}" {% if key == current_rating %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
+    <select name="faces" onchange="this.form.submit()">
+      {% for key, label in face_options.items() %}
+        <option value="{{ key }}" {% if key == current_faces %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
     <select name="sort" onchange="this.form.submit()">
       {% for key, label in sort_options.items() %}
         <option value="{{ key }}" {% if key == current_sort %}selected{% endif %}>{{ label }}</option>
@@ -63,9 +68,35 @@
   </div>
 </header>
 
-<main id="main" style="--tile-size: {{ tile_size }}px;">
+<main id="main" data-channel="{{ channel }}" style="--tile-size: {{ tile_size }}px;">
+  {% if face_query %}
+    <form class="banner" method="get">
+      <input type="hidden" name="face" value="{{ face_query.id }}">
+      <span>Same person as face #{{ face_query.id }} of <b>{{ face_query.name }}</b> ·
+        {{ total }} image{% if total != 1 %}s{% endif %} · score ≥</span>
+      <select name="min" onchange="this.form.submit()" title="Higher = stricter match">
+        {% for m in min_scores %}
+          <option value="{{ m }}" {% if m == face_query.min %}selected{% endif %}>{{ m }}{% if m == 0.363 %} (default){% endif %}</option>
+        {% endfor %}
+      </select>
+      <a class="btn small" href="{{ url_for('viewer.channel_page', channel=channel) }}">× Clear</a>
+    </form>
+  {% endif %}
+  <section class="tools" id="ml-box" data-channel="{{ channel }}">
+    <h2>ML analysis</h2>
+    <div class="row">
+      <label><input type="checkbox" id="study-src" {% if study_source %}checked{% endif %}>
+        Study source <span class="muted">(consenting patients or public dataset; allows face analysis)</span></label>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="ml-start" disabled>Analyze new images</button>
+      <button class="btn" id="ml-stop" hidden>Stop</button>
+      <span class="msg" id="ml-msg">Checking…</span>
+    </div>
+  </section>
+
   {% if not files %}
-    <div class="empty">No files match your filters.</div>
+    <div class="empty">{% if face_query %}No image has a face this close. Try a lower score.{% else %}No files match your filters.{% endif %}</div>
   {% endif %}
 
   {{ pager() }}
@@ -75,15 +106,17 @@
       {% set src = "/media?p=" ~ (f.rel|urlencode) %}
       {% if f.type == "image" %}
         <div class="tile" data-src="{{ src }}" data-type="image" data-rel="{{ f.rel }}"
-             data-rating="{{ f.rating }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+             data-rating="{{ f.rating }}" data-ml="{{ f.ml }}" data-faces="{{ f.face_count }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
           <span class="rate-badge"></span>
+          {% if f.score is not none %}<span class="score-badge" title="Face match score">{{ "%.2f"|format(f.score) }}</span>{% endif %}
           <img src="{{ src }}" loading="lazy" decoding="async" alt="">
           <div class="label" title="{{ f.name }}">{{ f.label }}</div>
         </div>
       {% elif f.type == "video" %}
         <div class="tile video" data-src="{{ src }}" data-type="video" data-rel="{{ f.rel }}"
-             data-rating="{{ f.rating }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+             data-rating="{{ f.rating }}" data-ml="{{ f.ml }}" data-faces="{{ f.face_count }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
           <span class="rate-badge"></span>
+          {% if f.score is not none %}<span class="score-badge" title="Face match score">{{ "%.2f"|format(f.score) }}</span>{% endif %}
           <img class="thumb" src="/thumb?p={{ f.rel|urlencode }}"
                loading="lazy" decoding="async" alt=""
                onerror="this.remove()">
@@ -92,8 +125,9 @@
         </div>
       {% else %}
         <div class="tile audio" data-src="{{ src }}" data-type="audio" data-rel="{{ f.rel }}"
-             data-rating="{{ f.rating }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
+             data-rating="{{ f.rating }}" data-ml="{{ f.ml }}" data-faces="{{ f.face_count }}" data-name="{{ f.label }}" data-size="{{ f.size_str }}">
           <span class="rate-badge"></span>
+          {% if f.score is not none %}<span class="score-badge" title="Face match score">{{ "%.2f"|format(f.score) }}</span>{% endif %}
           <div class="label" title="{{ f.name }}">{{ f.label }}</div>
         </div>
       {% endif %}
@@ -109,6 +143,7 @@
   <button class="nav next" onclick="navLb(1)" title="Next (→)">›</button>
   <div class="media" id="lb-media"></div>
   <div class="info" id="lb-info"></div>
+  <button class="btn small" id="lb-faces" hidden title="Show face boxes (F)">Show faces</button>
   <div class="rate-bar">
     <button class="rate good" data-rating="good" title="Good (1)">
       <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
@@ -129,4 +164,5 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='viewer.js') }}"></script>
+<script src="{{ url_for('static', filename='ml.js') }}"></script>
 {% endblock %}
