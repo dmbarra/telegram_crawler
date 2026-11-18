@@ -14,7 +14,7 @@ from viewer import config
 from viewer.download_routes import _json_body
 from viewer.helpers import (
     SORT_OPTIONS, DEFAULT_SORT, CHANNEL_SORTS, DEFAULT_CHANNEL_SORT,
-    card, file_item, sort_channels, page_window,
+    card, file_item, sort_channels, page_window, paginate,
 )
 from viewer.thumbnails import get_thumbnail
 
@@ -58,9 +58,14 @@ def index():
 
     all_cards = [card(r) for r in lib.channel_cards(VIEW_KINDS)]
     cards = [c for c in all_cards if not q or q in c["title"].lower()]
+    paged = paginate(sort_channels(cards, sort_key), _per_page(), request.args.get("page", 1, type=int))
     return render_template(
         "index.html",
-        cards=sort_channels(cards, sort_key),
+        cards=paged.pop("items"),
+        **paged,
+        matched=len(cards),
+        pager_endpoint="viewer.index",
+        pager_args={k: v for k, v in {"q": q, "sort": sort_key}.items() if v},
         total_channels=len(all_cards),
         total_files=sum(c["count"] for c in all_cards),
         query=q,

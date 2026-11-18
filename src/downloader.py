@@ -13,7 +13,7 @@ import asyncio
 from pathlib import Path
 from src.config import DOWNLOADS_DIR
 from src.dedup import hash_file
-from src.utils import guess_extension, get_media_key, media_folder, media_rel_path
+from src.utils import describe_error, guess_extension, get_media_key, media_folder, media_rel_path
 
 
 def _discard(path) -> None:
@@ -54,7 +54,7 @@ async def download_file(message, channel, library, progress):
         raise
     except Exception as e:
         _discard(dest)
-        progress.log(f"✗ #{message.id}: {e}", "error")
+        progress.log(f"✗ #{message.id} {describe_error(e)}", "error")
         progress.file_end(message.id, "error")
         return "error"
 

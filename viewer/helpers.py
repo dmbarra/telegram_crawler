@@ -117,6 +117,14 @@ def page_window(page: int, pages: int, radius: int = 2) -> list:
         prev = n
     return out
 
+def paginate(items: list, per: int, page: int) -> dict:
+    """Slice one page out of a full list, plus what the pager template needs."""
+    pages = max(1, -(-len(items) // per))
+    page = min(max(page, 1), pages)
+    return {"items": items[(page - 1) * per:page * per], "page": page, "pages": pages,
+            "window": page_window(page, pages), "first_index": (page - 1) * per + 1}
+
+
 def _face_crop(row) -> str:
     """CSS background that shows a square around the face, from the full image."""
     W, H = row["width"], row["height"]
