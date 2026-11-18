@@ -104,6 +104,36 @@ def folder_for_mime(mime: str) -> str:
     return "other"
 
 
+_RPC_REASONS = {
+    "PEER_ID_INVALID": ("invalid chat", "chat was upgraded, left, or deleted"),
+    "CHANNEL_INVALID": ("invalid chat", "chat was upgraded, left, or deleted"),
+    "CHAT_ID_INVALID": ("invalid chat", "chat was upgraded, left, or deleted"),
+    "CHANNEL_PRIVATE": ("no access", "you were removed, or it is private"),
+    "CHAT_FORBIDDEN": ("no access", "you were removed, or it is private"),
+    "USER_BANNED_IN_CHANNEL": ("banned", "account is banned in this chat"),
+    "CHAT_ADMIN_REQUIRED": ("admin only", "only admins can read this"),
+    "FILE_REFERENCE_EXPIRED": ("file expired", "run the job again"),
+}
+
+
+def describe_error(e: Exception) -> str:
+    """One short line: '[category] reason'. Works on Telethon RPC errors without importing Telethon."""
+    seconds = getattr(e, "seconds", None)
+    if seconds is not None:
+        return f"[rate limit] Telegram asks to wait {seconds} s"
+    code = getattr(e, "message", None)
+    if isinstance(code, str) and code in _RPC_REASONS:
+        category, hint = _RPC_REASONS[code]
+        return f"[{category}] {hint}"
+    if isinstance(e, (TimeoutError, ConnectionError)):
+        return f"[network] {type(e).__name__}, check the connection"
+    if isinstance(e, OSError):
+        return f"[disk] {e.strerror or e}"
+    if isinstance(code, str) and getattr(e, "code", None) is not None:
+        return f"[telegram {e.code}] {code}"
+    return f"[{type(e).__name__}] {e}"
+
+
 def media_rel_path(channel_id: int, message, ext: str) -> str:
     """<channel_id>/<type>/<date>_<message_id><ext> — no titles or captions, so nothing leaks."""
     date = message.date.strftime("%Y-%m-%d") if message.date else "0000-00-00"

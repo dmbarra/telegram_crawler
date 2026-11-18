@@ -2,6 +2,7 @@
 {% block title %}{{ titles[kind] }} · Media Viewer{% endblock %}
 
 {% block body %}
+{% from "_pager.html" import pager with context %}
 <header>
   <a href="/" class="btn">← Home</a>
   <h1>Media Viewer</h1>
@@ -30,6 +31,10 @@
     <div class="empty">No groups yet. Analyze a Study source channel, then press Group new.</div>
   {% endif %}
 
+  {% if pages > 1 %}
+    <p class="muted">Showing {{ first_index }}–{{ first_index + cards|length - 1 }} of {{ total }} groups</p>
+  {% endif %}
+  {{ pager() }}
   <div class="ch-cards">
     {% for g in cards %}
       <a class="ch-card" href="{{ url_for('groups.group_page', kind=kind, gid=g.id) }}">
@@ -46,6 +51,7 @@
       </a>
     {% endfor %}
   </div>
+  {{ pager() }}
 
   {% if hidden %}
     <p class="muted">{{ hidden }} small group{% if hidden != 1 %}s{% endif %} (under {{ min_images }} files) hidden.

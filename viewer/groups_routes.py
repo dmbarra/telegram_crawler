@@ -1,12 +1,10 @@
 """Viewer tabs for automatic groups: by look (CLIP) and by face."""
-import math
-
 from flask import Blueprint, abort, current_app, jsonify, render_template, request
 
 from src.groups import KINDS, LEVELS
 from viewer import config
 from viewer.download_routes import _json_body
-from viewer.helpers import file_item, group_card, page_window
+from viewer.helpers import file_item, group_card, paginate
 from viewer.routes import _per_page
 
 bp = Blueprint("groups", __name__)
@@ -33,8 +31,11 @@ def groups_page(kind):
     show_all = request.args.get("all") == "1"
     rows = lib.group_cards(_kind(kind), 1)
     shown = [r for r in rows if show_all or r["images"] >= MIN_IMAGES]
+    paged = paginate(shown, _per_page(), request.args.get("page", 1, type=int))
     return render_template(
-        "groups.html", kind=kind, titles=TITLES, cards=[group_card(r, kind) for r in shown],
+        "groups.html", kind=kind, titles=TITLES, cards=[group_card(r, kind) for r in paged.pop("items")],
+        **paged, total=len(shown),
+        pager_endpoint="groups.groups_page", pager_args={"kind": kind, **({"all": "1"} if show_all else {})},
         hidden=len(rows) - len(shown), show_all=show_all, min_images=MIN_IMAGES,
         level=grouper.level(kind), levels=list(zip(range(1, 6), LEVEL_LABELS, LEVELS[kind])))
 
@@ -45,18 +46,14 @@ def group_page(kind, gid):
     matches = lib.group_paths(_kind(kind), gid)
     if not matches:
         abort(404)
-    per = _per_page()
-    total = len(matches)
-    pages = max(1, math.ceil(total / per))
-    page = min(max(request.args.get("page", 1, type=int), 1), pages)
-    page_matches = matches[(page - 1) * per:page * per]
+    paged = paginate(matches, _per_page(), request.args.get("page", 1, type=int))
+    page_matches = paged.pop("items")
     scores = dict(page_matches)
     files = [file_item(r) for r in lib.kept_rows([p for p, _ in page_matches])]
     for f in files:
         f["score"] = scores.get(f["rel"])
     return render_template(
-        "group.html", kind=kind, gid=gid, titles=TITLES, files=files, total=total,
-        page=page, pages=pages, window=page_window(page, pages), first_index=(page - 1) * per + 1,
+        "group.html", kind=kind, gid=gid, titles=TITLES, files=files, total=len(matches), **paged,
         pager_endpoint="groups.group_page", pager_args={"kind": kind, "gid": gid},
         empty_text="This group has no files left.", tile_size=config.TILE_SIZE)
 

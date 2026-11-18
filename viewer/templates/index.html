@@ -2,6 +2,7 @@
 {% block title %}Channels · Media Viewer{% endblock %}
 
 {% block body %}
+{% from "_pager.html" import pager with context %}
 <header>
   <a href="/" class="btn">← Home</a>
   <h1>🎬 Media Viewer</h1>
@@ -18,6 +19,7 @@
   <a href="/duplicates" class="btn">Duplicates</a>
   <div class="stats">
     {{ total_files }} files · {{ total_channels }} channel{% if total_channels != 1 %}s{% endif %}
+    {% if pages > 1 %}· showing {{ first_index }}–{{ first_index + cards|length - 1 }} of {{ matched }}{% endif %}
   </div>
 </header>
 
@@ -32,6 +34,7 @@
     </div>
   {% endif %}
 
+  {{ pager() }}
   <div class="ch-cards">
     {% for c in cards %}
       <a class="ch-card" href="{{ url_for('viewer.channel_page', channel=c.id) }}">
@@ -58,5 +61,6 @@
       </a>
     {% endfor %}
   </div>
+  {{ pager() }}
 </main>
 {% endblock %}

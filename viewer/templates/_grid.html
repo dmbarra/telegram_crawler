@@ -1,31 +1,5 @@
 {# Shared by the channel page and the group page: pager, tiles, lightbox. #}
-{% macro pager() %}
-  {% if pages > 1 %}
-  <nav class="pager">
-    {% if page > 1 %}
-      <a class="btn" href="{{ url_for(pager_endpoint, page=page - 1, **pager_args) }}">‹ Prev</a>
-    {% else %}
-      <span class="btn disabled">‹ Prev</span>
-    {% endif %}
-    {% for n in window %}
-      {% if n is none %}
-        <span class="gap">…</span>
-      {% elif n == page %}
-        <span class="btn current">{{ n }}</span>
-      {% else %}
-        <a class="btn" href="{{ url_for(pager_endpoint, page=n, **pager_args) }}">{{ n }}</a>
-      {% endif %}
-    {% endfor %}
-    {% if page < pages %}
-      <a class="btn" href="{{ url_for(pager_endpoint, page=page + 1, **pager_args) }}">Next ›</a>
-    {% else %}
-      <span class="btn disabled">Next ›</span>
-    {% endif %}
-    <span class="page-of">page {{ page }} of {{ pages }}</span>
-  </nav>
-  {% endif %}
-{% endmacro %}
-
+{% from "_pager.html" import pager with context %}
   {% if not files %}
     <div class="empty">{{ empty_text }}</div>
   {% endif %}

@@ -21,6 +21,7 @@ from telethon.tl.types import (
 )
 from src.config import EXTRA_CHANNELS
 from src.downloader import download_in_batches
+from src.utils import describe_error
 
 
 # ─── media choice → (filter factory, folder name, mime filter) ───
@@ -108,7 +109,7 @@ async def fetch_channels(client, log, saved_extras):
             folder_id=0,
         ))
     except Exception as e:
-        log(f"✗ Failed to fetch main dialogs: {e}", "error")
+        log(f"✗ Failed to fetch main dialogs {describe_error(e)}", "error")
         return [], []
 
     # ── Fetch archived (folder_id=1) — merge, ignore errors ──
@@ -128,12 +129,17 @@ async def fetch_channels(client, log, saved_extras):
     # ── Merge, dedupe by id ──
     seen_ids = set()
     all_chats = []
+    unreadable = {}
     for chat in list(resp.chats) + list(archived_chats):
         if not hasattr(chat, "title"):
             continue  # skip User records (bots, private chats)
         if chat.id in seen_ids:
             continue
         seen_ids.add(chat.id)
+        reason = _unreadable_reason(chat)
+        if reason:
+            unreadable[reason] = unreadable.get(reason, 0) + 1
+            continue
         all_chats.append(chat)
 
     normalized = [normalize_chat(chat) for chat in all_chats]
@@ -147,7 +153,7 @@ async def fetch_channels(client, log, saved_extras):
         try:
             entity = await client.get_entity(ident)
         except Exception as e:
-            log(f"⚠ Could not resolve '{ident}': {e}", "warn")
+            log(f"⚠ Could not resolve '{ident}' {describe_error(e)}", "warn")
             failed.append({"ident": ident, "source": source, "error": str(e)})
             continue
         if entity.id in by_id:
@@ -162,19 +168,36 @@ async def fetch_channels(client, log, saved_extras):
     log(f"✓ Fetched {len(normalized)} channels/groups fresh from server"
         f"{' (includes ' + str(archived_count) + ' archived)' if archived_count else ''}",
         "ok")
+    if unreadable:
+        parts = ", ".join(f"{n} {r}" for r, n in unreadable.items())
+        log(f"○ Skipped {sum(unreadable.values())} chats you can't read: {parts}", "warn")
 
     return normalized, failed
 
 
 # ─── internal helpers ───────────────────────────────────────────
-async def _probe_has_media(client, entity, filter_type, mime) -> bool:
+def _unreadable_reason(chat):
+    """Dialogs that still list a chat whose messages can't be searched."""
+    kind = type(chat).__name__
+    if kind == "ChannelForbidden":
+        return "banned or private"
+    if kind == "ChatForbidden":
+        return "left or removed"
+    if getattr(chat, "migrated_to", None) or getattr(chat, "deactivated", False):
+        return "upgraded to supergroup"
+    return None
+
+
+async def _probe_has_media(client, entity, filter_type, mime, log):
+    """True / False = has media or not; None = the probe itself failed (already logged)."""
     if filter_type is None or mime:
         return True
     try:
         probe = await client.get_messages(entity, filter=filter_type, limit=1)
         return len(probe) > 0
-    except Exception:
-        return False
+    except Exception as e:
+        log(f"  ✗ Probe failed {describe_error(e)}", "error")
+        return None
 
 
 async def _fetch_all_media(client, entity, limit, log):
@@ -220,10 +243,12 @@ async def run_job(client, channels, filter_type, folder_name, mime,
 
         try:
             ok = await asyncio.wait_for(
-                _probe_has_media(client, entity, filter_type, mime), timeout=30
+                _probe_has_media(client, entity, filter_type, mime, log), timeout=30
             )
         except asyncio.TimeoutError:
-            log("  ✗ probe timed out", "error")
+            log("  ✗ Probe failed [network] timed out after 30 s", "error")
+            continue
+        if ok is None:
             continue
         if not ok:
             log(f"  ○ No {folder_name}, skipping", "warn")
@@ -235,10 +260,10 @@ async def run_job(client, channels, filter_type, folder_name, mime,
                 timeout=180
             )
         except asyncio.TimeoutError:
-            log("  ✗ fetch timed out after 180s — skipping", "error")
+            log("  ✗ Fetch failed [network] timed out after 180 s", "error")
             continue
         except Exception as e:
-            log(f"  ✗ Fetch failed: {e}", "error")
+            log(f"  ✗ Fetch failed {describe_error(e)}", "error")
             continue
 
         if not msgs:
