@@ -113,7 +113,7 @@ async def fetch_channels(client, log, saved_extras):
         return [], []
 
     # ── Fetch archived (folder_id=1) — merge, ignore errors ──
-    archived_chats = []
+    archived_chats, archived_dialogs = [], []
     try:
         arch_resp = await client(GetDialogsRequest(
             offset_date=None, offset_id=0,
@@ -122,9 +122,14 @@ async def fetch_channels(client, log, saved_extras):
             hash=0,
             folder_id=1,
         ))
-        archived_chats = arch_resp.chats
+        archived_chats, archived_dialogs = arch_resp.chats, arch_resp.dialogs
     except Exception:
         pass  # no archived folder or API restriction — that's fine
+
+    # `chats` also holds chats only mentioned in messages (e.g. forward sources);
+    # only the ones with a dialog are really in your chat list.
+    in_list = {getattr(d.peer, "channel_id", None) or getattr(d.peer, "chat_id", None)
+               for d in list(resp.dialogs) + list(archived_dialogs)}
 
     # ── Merge, dedupe by id ──
     seen_ids = set()
@@ -133,7 +138,7 @@ async def fetch_channels(client, log, saved_extras):
     for chat in list(resp.chats) + list(archived_chats):
         if not hasattr(chat, "title"):
             continue  # skip User records (bots, private chats)
-        if chat.id in seen_ids:
+        if chat.id in seen_ids or chat.id not in in_list:
             continue
         seen_ids.add(chat.id)
         reason = _unreadable_reason(chat)
@@ -164,7 +169,8 @@ async def fetch_channels(client, log, saved_extras):
         by_id[entity.id] = normalize_entity(entity, ident, source)
         normalized.append(by_id[entity.id])
 
-    archived_count = sum(1 for c in archived_chats if hasattr(c, "title"))
+    kept_ids = {c.id for c in all_chats}
+    archived_count = sum(1 for c in archived_chats if c.id in kept_ids)
     log(f"✓ Fetched {len(normalized)} channels/groups fresh from server"
         f"{' (includes ' + str(archived_count) + ' archived)' if archived_count else ''}",
         "ok")
