@@ -65,21 +65,21 @@ class Scanner:
                      "finished_at": self.finished_at}
         return {**state, **self.library.media_info_summary()}
 
-    def start(self):
+    def start(self, force: bool = False, on_done=None):
         """Returns an error message, or None if the scan started."""
         with self._lock:
             if self.running:
                 return "A scan is already running"
-            todo = self.library.unscanned()
+            todo = self.library.unscanned(force=force)
             if not todo:
                 return "Nothing to scan: every file already has media info"
             self.running = True
             self.done, self.total, self.errors = 0, len(todo), 0
             self.started_at, self.finished_at = time.time(), None
-        threading.Thread(target=self._run, args=(todo,), daemon=True, name="mediainfo").start()
+        threading.Thread(target=self._run, args=(todo, on_done), daemon=True, name="mediainfo").start()
         return None
 
-    def _run(self, todo):
+    def _run(self, todo, on_done=None):
         try:
             with ThreadPoolExecutor(WORKERS) as pool:
                 for ok in pool.map(self._scan_one, todo):
@@ -90,6 +90,11 @@ class Scanner:
             with self._lock:
                 self.running = False
                 self.finished_at = time.time()
+            if on_done:
+                try:
+                    on_done()
+                except Exception:
+                    pass
 
     def _scan_one(self, row) -> bool:
         path = DOWNLOADS_DIR / row["path"]

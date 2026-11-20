@@ -64,14 +64,50 @@ def files_page():
 
 @bp.get("/api/scan/status")
 def scan_status():
-    return jsonify(current_app.extensions["telegram"].scanner.snapshot())
+    tg = current_app.extensions["telegram"]
+    s = tg.scanner.snapshot()
+    ml = tg.analyzer.snapshot()
+    return jsonify({
+        **s,
+        "running": s["running"] or ml["running"],
+        "scanner_running": s["running"],
+        "ml_running": ml["running"],
+        "ml_done": ml["done"],
+        "ml_total": ml["total"],
+        "ml_faces": ml["faces"],
+        "ml_errors": ml["errors"],
+        "ml_result": ml["result"],
+        "ml_message": ml["message"],
+    })
 
 
 @bp.post("/api/scan/start")
 def scan_start():
-    _json_body()
-    err = current_app.extensions["telegram"].scanner.start()
+    body = _json_body()
+    force = bool(body.get("force"))
+    run_ml = bool(body.get("run_ml"))
+    tg = current_app.extensions["telegram"]
+
+    if tg.scanner.running or tg.analyzer.running:
+        return jsonify(error="A scan or ML analysis is already running"), 409
+
+    if run_ml:
+        from src.ml import health, ServiceDown
+        try:
+            health()
+        except ServiceDown as e:
+            return jsonify(error=f"Cannot run ML: {e}"), 409
+
+    def start_ml_after_scan():
+        tg.analyzer.start(channel_id=None, force=force, require_study=False)
+
+    err = tg.scanner.start(force=force, on_done=(start_ml_after_scan if run_ml else None))
     if err:
+        if run_ml and "Nothing to scan" in err:
+            ml_err = tg.analyzer.start(channel_id=None, force=force, require_study=False)
+            if ml_err:
+                return jsonify(error=ml_err), 409
+            return jsonify(ok=True)
         return jsonify(error=err), 409
     return jsonify(ok=True)
 

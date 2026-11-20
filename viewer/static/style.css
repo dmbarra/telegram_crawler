@@ -340,3 +340,7 @@ tr.mg-row.error td { color: #f87171; }
 .tile .unmark-btn { position: absolute; top: 6px; right: 6px; z-index: 3; padding: 2px 8px; font-size: 11px;
                     background: rgba(0, 43, 54, 0.85); color: #859900; border: 1px solid #859900; border-radius: 4px; }
 .tile .unmark-btn:hover { background: #859900; color: #002b36; font-weight: bold; }
+
+.check-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;
+                color: #93a1a1; margin-left: 10px; user-select: none; }
+.check-inline input[type="checkbox"] { cursor: pointer; margin: 0; }

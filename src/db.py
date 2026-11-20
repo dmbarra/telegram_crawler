@@ -319,11 +319,11 @@ class Library:
         return {"count": row["n"], "size": row["size"] or 0}
 
     # ─── media info ─────────────────────────────────────────────
-    def unscanned(self) -> list:
-        return self._all(
-            f"""WITH {KEPT} SELECT k.path, k.kind FROM kept k
-                WHERE k.kind IN ('images', 'videos', 'audio')
-                  AND NOT EXISTS (SELECT 1 FROM media_info m WHERE m.path = k.path)""")
+    def unscanned(self, force: bool = False) -> list:
+        where = "k.kind IN ('images', 'videos', 'audio')"
+        if not force:
+            where += " AND NOT EXISTS (SELECT 1 FROM media_info m WHERE m.path = k.path)"
+        return self._all(f"""WITH {KEPT} SELECT k.path, k.kind FROM kept k WHERE {where}""")
 
     def save_media_info(self, path, width, height, duration, has_audio, codec, phash, error) -> None:
         self._run(
@@ -377,14 +377,20 @@ class Library:
         else:
             self._run("DELETE FROM study_sources WHERE channel_id = ?", (channel_id,))
 
-    def ml_todo(self, channel_id: int, model: str) -> list:
-        """Images and videos of a study-source channel with no result from this model yet."""
-        return self._all(
-            f"""WITH {KEPT} SELECT k.path, k.kind, k.duration FROM kept k
-                WHERE k.channel_id = ? AND k.kind IN {ML_KINDS}
-                  AND EXISTS (SELECT 1 FROM study_sources s WHERE s.channel_id = k.channel_id)
-                  AND NOT EXISTS (SELECT 1 FROM ml_results r WHERE r.path = k.path AND r.model = ?)
-                ORDER BY k.at""", (channel_id, model))
+    def ml_todo(self, channel_id: int | None, model: str, force: bool = False, require_study: bool = True) -> list:
+        """Images and videos to analyze with this model."""
+        clauses = [f"k.kind IN {ML_KINDS}"]
+        params = []
+        if channel_id is not None:
+            clauses.append("k.channel_id = ?")
+            params.append(channel_id)
+        if require_study:
+            clauses.append("EXISTS (SELECT 1 FROM study_sources s WHERE s.channel_id = k.channel_id)")
+        if not force:
+            clauses.append("NOT EXISTS (SELECT 1 FROM ml_results r WHERE r.path = k.path AND r.model = ?)")
+            params.append(model)
+        where = " AND ".join(clauses)
+        return self._all(f"WITH {KEPT} SELECT k.path, k.kind, k.duration FROM kept k WHERE {where} ORDER BY k.at", params)
 
     def ml_summary(self, channel_id: int, model=None) -> dict:
         """Counts for one channel; with a model, only results from that model count as done."""

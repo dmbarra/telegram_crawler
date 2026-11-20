@@ -80,9 +80,9 @@ class Analyzer:
             state["study_source"] = self.library.is_study_source(channel_id)
         return state
 
-    def start(self, channel_id: int):
+    def start(self, channel_id: int | None = None, force: bool = False, require_study: bool = True):
         """Returns an error message, or None if the run started."""
-        if not self.library.is_study_source(channel_id):
+        if channel_id is not None and require_study and not self.library.is_study_source(channel_id):
             return "Turn on Study source for this channel first"
         with self._lock:
             if self.running:
@@ -91,13 +91,13 @@ class Analyzer:
             model = health()
         except ServiceDown as e:
             return str(e)
-        todo = [dict(r) for r in self.library.ml_todo(channel_id, model)]
+        todo = [dict(r) for r in self.library.ml_todo(channel_id, model, force=force, require_study=require_study)]
         with self._lock:
             if self.running:
                 return "An analysis is already running"
             self.model = model
             if not todo:
-                return "Nothing new: every image of this channel is already analyzed"
+                return "Nothing new: every image is already analyzed" if not force else "No images found to analyze"
             self._stop.clear()
             self.running, self.channel_id = True, channel_id
             self.done, self.total, self.errors, self.faces = 0, len(todo), 0, 0

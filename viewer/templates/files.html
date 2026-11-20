@@ -27,10 +27,18 @@
 
   {% if not channel %}
     <section class="tools">
-      <h2>Media info</h2>
+      <h2>Media info & ML</h2>
       <div class="row">
-        <button class="btn" id="scan-start">Scan new files</button>
-        <span class="msg" id="scan-msg">Reads size, length and a picture hash with ffprobe. Runs on this server only.</span>
+        <button class="btn" id="scan-start">Scan files</button>
+        <label class="check-inline">
+          <input type="checkbox" id="scan-ml"> Also run ML analysis (CLIP + Faces)
+        </label>
+        <label class="check-inline">
+          <input type="checkbox" id="scan-force"> Force re-process all (including already analyzed)
+        </label>
+      </div>
+      <div class="row">
+        <span class="msg" id="scan-msg">Reads size, length and a picture hash with ffprobe.</span>
       </div>
       <h2>Rules</h2>
       <div class="row">
@@ -121,30 +129,54 @@ const setMsg = (el, text, cls) => { el.textContent = text; el.className = "msg "
 const scanBtn = document.getElementById("scan-start");
 if (scanBtn) {
   const scanMsg = document.getElementById("scan-msg");
+  const scanMl = document.getElementById("scan-ml");
+  const scanForce = document.getElementById("scan-force");
   let wasRunning = false;
   const showScan = async () => {
     try {
       const s = await (await fetch("/api/scan/status")).json();
       scanBtn.disabled = s.running;
       if (s.running) {
-        setMsg(scanMsg, `Scanning… ${s.done} of ${s.total} · ${s.errors} error(s)`);
         wasRunning = true;
+        if (s.scanner_running) {
+          setMsg(scanMsg, `Scanning media info… ${s.done} of ${s.total} · ${s.errors} error(s)`);
+        } else if (s.ml_running) {
+          setMsg(scanMsg, `Running ML analysis (CLIP + Faces)… ${s.ml_done} of ${s.ml_total} · ${s.ml_faces} face(s) · ${s.ml_errors} error(s)`);
+        } else {
+          setMsg(scanMsg, "Processing…");
+        }
         setTimeout(showScan, 1500);
         return;
       }
       const left = s.files - s.scanned;
-      const base = `${s.scanned} of ${s.files} files scanned · ${left} new · ${s.failed} could not be read`;
-      if (wasRunning) setMsg(scanMsg, `Done: scanned ${s.done} file(s), ${s.errors} error(s). ${base}`, s.errors ? "error" : "ok");
-      else setMsg(scanMsg, base);
-      scanBtn.disabled = left === 0;
+      let base = `${s.scanned} of ${s.files} files scanned · ${left} new · ${s.failed} could not be read`;
+      if (wasRunning) {
+        let doneMsg = `Done! ${base}`;
+        if (s.ml_done) doneMsg += ` · ML processed ${s.ml_done} file(s), found ${s.ml_faces} face(s).`;
+        setMsg(scanMsg, doneMsg, (s.errors || s.ml_errors) ? "error" : "ok");
+      } else {
+        setMsg(scanMsg, base);
+      }
+      scanBtn.disabled = false;
     } catch (err) {
       setMsg(scanMsg, "Could not read scan status: " + err.message, "error");
     }
   };
   scanBtn.addEventListener("click", async () => {
     scanBtn.disabled = true;
-    try { await post("/api/scan/start", {}); showScan(); }
-    catch (err) { setMsg(scanMsg, "Scan not started: " + err.message, "error"); scanBtn.disabled = false; }
+    const run_ml = scanMl ? scanMl.checked : false;
+    const force = scanForce ? scanForce.checked : false;
+    if (force && !confirm("Force re-process all files?\n\nThis will re-scan and recompute ML vectors for all images and videos from scratch.")) {
+      scanBtn.disabled = false;
+      return;
+    }
+    try {
+      await post("/api/scan/start", { run_ml, force });
+      showScan();
+    } catch (err) {
+      setMsg(scanMsg, "Scan not started: " + err.message, "error");
+      scanBtn.disabled = false;
+    }
   });
   showScan();
 
