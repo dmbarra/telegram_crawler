@@ -32,6 +32,7 @@
           <div class="play-badge">▶</div>
         {% endif %}
         <div class="label">{{ f.channel_title }} · {{ f.size_str }}</div>
+        <button type="button" class="btn small unmark-btn" data-path="{{ f.rel }}" title="Keep this file (remove from delete list)">Keep</button>
       </a>
     {% endfor %}
   </div>
@@ -72,6 +73,29 @@ btn.addEventListener("click", async () => {
     msg.textContent = "Delete failed: " + err.message;
     msg.className = "msg error";
     btn.disabled = false;
+  }
+});
+
+document.getElementById("main").addEventListener("click", async (e) => {
+  const unmarkBtn = e.target.closest(".unmark-btn");
+  if (!unmarkBtn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const path = unmarkBtn.dataset.path;
+  unmarkBtn.disabled = true;
+  try {
+    const res = await fetch("/api/rate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, rating: null })
+    });
+    if (res.ok) {
+      const tile = unmarkBtn.closest(".tile");
+      if (tile) tile.remove();
+    } else {
+      unmarkBtn.disabled = false;
+    }
+  } catch (_) {
+    unmarkBtn.disabled = false;
   }
 });
 </script>

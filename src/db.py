@@ -350,6 +350,23 @@ class Library:
                 WHERE kind = 'videos' AND duration IS NOT NULL AND duration < ?
                   AND rating IS NOT 'delete'""", (seconds,))
 
+    def visual_duplicate_candidates(self) -> list:
+        """Kept images that have phash (media_info) or clip (ml_results), not rated 'delete'."""
+        return self._all(
+            f"""WITH {KEPT}
+                SELECT k.path, k.channel_id, k.size, k.at,
+                       COALESCE(m.width, ml.width, k.width) AS width,
+                       COALESCE(m.height, ml.height, k.height) AS height,
+                       m.phash, ml.clip
+                FROM kept k
+                LEFT JOIN media_info m ON m.path = k.path
+                LEFT JOIN ml_results ml ON ml.path = k.path
+                WHERE k.kind = 'images'
+                  AND (m.phash IS NOT NULL OR ml.clip IS NOT NULL)
+                  AND (k.rating IS NULL OR k.rating != 'delete')
+                ORDER BY k.channel_id, k.at ASC"""
+        )
+
     # ─── study sources + ML results ─────────────────────────────
     def is_study_source(self, channel_id: int) -> bool:
         return self._one("SELECT 1 FROM study_sources WHERE channel_id = ?", (channel_id,)) is not None

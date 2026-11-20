@@ -40,6 +40,17 @@
         <button class="btn danger" id="short-apply" disabled>Mark all as To delete</button>
         <span class="msg" id="short-msg">Only scanned videos are checked.</span>
       </div>
+      <div class="row">
+        <label>Similar / duplicate images (Hybrid)
+          <select id="vdup-scope" class="select-inline">
+            <option value="channel">Within same channel</option>
+            <option value="all">Across all channels</option>
+          </select>
+        </label>
+        <button class="btn" id="vdup-find">Find</button>
+        <button class="btn danger" id="vdup-apply" disabled>Mark duplicates as To delete</button>
+        <span class="msg" id="vdup-msg">Keeps highest resolution, marks lower-quality copies.</span>
+      </div>
     </section>
 
     {% if not channels %}
@@ -161,6 +172,36 @@ if (scanBtn) {
   applyBtn.addEventListener("click", () => {
     if (confirm(`Mark every video shorter than ${sec.value} s as To delete?\n\nNothing is deleted yet. You can review them on the To delete page.`)) rule(true);
     else applyBtn.disabled = false;
+  });
+
+  const vdupScope = document.getElementById("vdup-scope");
+  const vdupFind = document.getElementById("vdup-find");
+  const vdupApply = document.getElementById("vdup-apply");
+  const vdupMsg = document.getElementById("vdup-msg");
+  const vdupRule = async (apply) => {
+    vdupFind.disabled = vdupApply.disabled = true;
+    try {
+      const d = await post("/api/rules/visual-duplicates", { scope: vdupScope.value, apply });
+      if (apply) {
+        setMsg(vdupMsg, `Marked ${d.count} duplicate image(s) as To delete. ${d.marked} file(s) are now on the To delete page.`, "ok");
+      } else {
+        if (d.count) {
+          setMsg(vdupMsg, `Found ${d.count} duplicate copy(ies) in ${d.clusters} group(s), saving ${d.size}. Highest resolution is kept.`, "warn");
+          vdupApply.disabled = false;
+        } else {
+          setMsg(vdupMsg, `No duplicate images found among ${d.candidates} scanned image(s).`, "ok");
+        }
+      }
+    } catch (err) {
+      setMsg(vdupMsg, "Failed: " + err.message, "error");
+    }
+    vdupFind.disabled = false;
+  };
+  vdupFind.addEventListener("click", () => vdupRule(false));
+  vdupScope.addEventListener("change", () => { vdupApply.disabled = true; });
+  vdupApply.addEventListener("click", () => {
+    if (confirm("Mark the lower-resolution duplicate copies as To delete?\n\nNothing is deleted yet. You can review and approve them on the To delete page.")) vdupRule(true);
+    else vdupApply.disabled = false;
   });
 }
 

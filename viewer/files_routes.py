@@ -5,6 +5,7 @@ import shutil
 from flask import Blueprint, abort, current_app, jsonify, render_template, request
 
 from src.config import DOWNLOADS_DIR
+from src.dedup import find_visual_duplicates
 from viewer.download_routes import _json_body
 from viewer.helpers import card, file_item, fmt_size, page_window
 
@@ -88,6 +89,35 @@ def short_videos():
         lib.mark_to_delete([r["path"] for r in rows])
     return jsonify(count=len(rows), size=fmt_size(sum(r["size"] or 0 for r in rows)),
                    applied=body.get("apply") is True, marked=lib.marked_summary()["count"])
+
+
+@bp.post("/api/rules/visual-duplicates")
+def visual_duplicates():
+    """Find visual duplicate images (pHash + CLIP); with apply=true, mark copies as To delete."""
+    body = _json_body()
+    scope = body.get("scope", "channel")
+    if scope not in ("channel", "all"):
+        scope = "channel"
+    max_hamming = int(body.get("max_hamming", 4))
+    if not (0 <= max_hamming <= 16):
+        max_hamming = 4
+
+    lib = _library()
+    candidates = [dict(r) for r in lib.visual_duplicate_candidates()]
+    result = find_visual_duplicates(candidates, max_hamming=max_hamming, scope=scope)
+    dups = result["duplicates"]
+
+    if body.get("apply") is True and dups:
+        lib.mark_to_delete([d["path"] for d in dups])
+
+    return jsonify(
+        count=result["count"],
+        size=fmt_size(result["size"]),
+        applied=body.get("apply") is True,
+        marked=lib.marked_summary()["count"],
+        candidates=len(candidates),
+        clusters=result["clusters_count"],
+    )
 
 
 @bp.route("/files/marked")

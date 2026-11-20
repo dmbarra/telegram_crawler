@@ -220,12 +220,13 @@ input[type=number] { width: 90px; }
 .warn { color: #fbbf24; }
 .error { color: #f87171; }
 
-.log { height: 280px; overflow-y: auto; background: #0b0d11; border: 1px solid #2a2f3a;
-       border-radius: 6px; padding: 8px; font: 12px/1.5 ui-monospace, Menlo, monospace; }
-.log .line { white-space: pre-wrap; word-break: break-word; color: #d1d5db; }
-.log .line.ok { color: #34d399; }
-.log .line.warn { color: #fbbf24; }
-.log .line.error { color: #f87171; }
+.log { height: 280px; overflow-y: auto; background: #002b36; border: 1px solid #073642;
+       border-radius: 6px; padding: 10px 12px; font: 13px/1.6 "Cascadia Code", "Fira Code", "Consolas", ui-monospace, Menlo, monospace; }
+.log .line { white-space: pre-wrap; word-break: break-word; color: #93a1a1; }
+.log .line.ok { color: #859900; font-weight: 500; }
+.log .line.warn { color: #b58900; font-weight: 500; }
+.log .line.error { color: #dc322f; font-weight: 500; }
+.log .line.info { color: #268bd2; }
 /* ── Discover page ──────────────────────────────────────── */
 .join-bar { padding: 8px 20px; font-size: 13px; color: #d1d5db; background: #111827;
             border-bottom: 1px solid #2a2f3a; }
@@ -332,3 +333,10 @@ tr.mg-row.error td { color: #f87171; }
 .tabs a.active { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
 .ch-card .cover.face-crop { background-repeat: no-repeat; aspect-ratio: 1; }
 .ch-card .cover.face-crop::before { content: none; }
+
+.select-inline { margin-left: 6px; padding: 4px 8px; font-size: 13px; background: #073642; color: #93a1a1;
+                 border: 1px solid #586e75; border-radius: 4px; }
+.tile { position: relative; }
+.tile .unmark-btn { position: absolute; top: 6px; right: 6px; z-index: 3; padding: 2px 8px; font-size: 11px;
+                    background: rgba(0, 43, 54, 0.85); color: #859900; border: 1px solid #859900; border-radius: 4px; }
+.tile .unmark-btn:hover { background: #859900; color: #002b36; font-weight: bold; }

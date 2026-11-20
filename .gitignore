@@ -16,3 +16,4 @@ channels.txt
 data/
 *.session
 *.session-journal
+.vscode/
