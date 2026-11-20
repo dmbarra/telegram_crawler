@@ -122,7 +122,16 @@ def short_videos():
     lib = _library()
     rows = lib.short_videos(seconds)
     if body.get("apply") is True:
-        lib.mark_to_delete([r["path"] for r in rows])
+        import json
+        items = [
+            (r["path"], json.dumps({
+                "type": "short_video",
+                "duration": round(float(r["duration"]), 1) if r.get("duration") is not None else None,
+                "limit": seconds,
+            }))
+            for r in rows
+        ]
+        lib.mark_to_delete(items)
     return jsonify(count=len(rows), size=fmt_size(sum(r["size"] or 0 for r in rows)),
                    applied=body.get("apply") is True, marked=lib.marked_summary()["count"])
 
@@ -144,7 +153,17 @@ def visual_duplicates():
     dups = result["duplicates"]
 
     if body.get("apply") is True and dups:
-        lib.mark_to_delete([d["path"] for d in dups])
+        import json
+        items = [
+            (d["path"], json.dumps({
+                "type": "duplicate",
+                "keeper": d["keeper"],
+                "keeper_res": d.get("keeper_res"),
+                "dup_res": d.get("dup_res"),
+            }))
+            for d in dups
+        ]
+        lib.mark_to_delete(items)
 
     return jsonify(
         count=result["count"],
@@ -158,12 +177,22 @@ def visual_duplicates():
 
 @bp.route("/files/marked")
 def marked_page():
+    import json
     lib = _library()
     marked = lib.marked_summary()
     entries = []
     for r in lib.marked_files():
         item = file_item(r)
         item["channel_title"] = r["title"]
+        item["duration"] = r.get("duration")
+        raw_reason = r.get("reason")
+        reason_obj = None
+        if raw_reason:
+            try:
+                reason_obj = json.loads(raw_reason)
+            except Exception:
+                reason_obj = {"type": "text", "text": raw_reason}
+        item["reason"] = reason_obj
         entries.append(item)
     return render_template("marked.html", entries=entries, count=marked["count"],
                            size_str=fmt_size(marked["size"]))

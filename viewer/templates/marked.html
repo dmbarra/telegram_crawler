@@ -20,21 +20,84 @@
     <div class="empty">No files are marked to delete. Use the <a href="/viewer">Viewer</a> to mark some.</div>
   {% endif %}
 
-  <div class="grid" style="--tile-size: 200px;">
+  <div class="grid" style="--tile-size: 220px;">
     {% for f in entries %}
-      <a class="tile{% if f.type != 'image' %} {{ f.type }}{% endif %}" href="/media?p={{ f.rel|urlencode }}"
-         target="_blank" rel="noopener" title="{{ f.channel_title }} · {{ f.name }} · {{ f.size_str }}">
-        {% if f.type == "image" %}
-          <img src="/media?p={{ f.rel|urlencode }}" loading="lazy" decoding="async" alt="">
-        {% elif f.type == "video" %}
-          <img class="thumb" src="/thumb?p={{ f.rel|urlencode }}" loading="lazy" decoding="async" alt=""
-               onerror="this.remove()">
-          <div class="play-badge">▶</div>
-        {% endif %}
-        <div class="label">{{ f.channel_title }} · {{ f.size_str }}</div>
-        <button type="button" class="btn small unmark-btn" data-path="{{ f.rel }}" title="Keep this file (remove from delete list)">Keep</button>
-      </a>
+      <div class="tile-wrap">
+        <a class="tile{% if f.type != 'image' %} {{ f.type }}{% endif %}" href="/media?p={{ f.rel|urlencode }}"
+           target="_blank" rel="noopener" title="{{ f.channel_title }} · {{ f.name }} · {{ f.size_str }}">
+          {% if f.type == "image" %}
+            <img src="/media?p={{ f.rel|urlencode }}" loading="lazy" decoding="async" alt="">
+          {% elif f.type == "video" %}
+            <img class="thumb" src="/thumb?p={{ f.rel|urlencode }}" loading="lazy" decoding="async" alt=""
+                 onerror="this.remove()">
+            <div class="play-badge">▶</div>
+          {% endif %}
+          <div class="label">{{ f.channel_title }} · {{ f.size_str }}</div>
+          <button type="button" class="btn small unmark-btn" data-path="{{ f.rel }}" title="Keep this file (remove from delete list)">Keep</button>
+        </a>
+        <div class="tile-reason">
+          {% if f.reason and f.reason.type == 'duplicate' %}
+            <span class="reason-badge dup" title="Duplicate copy of {{ f.reason.keeper }}">
+              🔁 Duplicate ({{ f.reason.dup_res }} vs {{ f.reason.keeper_res }})
+            </span>
+            <button type="button" class="btn small compare-btn"
+                    data-dup="{{ f.rel }}"
+                    data-dup-res="{{ f.reason.dup_res or '' }}"
+                    data-dup-size="{{ f.size_str }}"
+                    data-keeper="{{ f.reason.keeper }}"
+                    data-keeper-res="{{ f.reason.keeper_res or '' }}"
+                    title="Compare side-by-side with original">
+              Compare
+            </button>
+          {% elif f.reason and f.reason.type == 'short_video' %}
+            <span class="reason-badge short" title="Video is shorter than {{ f.reason.limit }}s">
+              ⏱️ Short: {{ f.reason.duration }}s (&lt; {{ f.reason.limit }}s rule)
+            </span>
+          {% elif f.type == 'video' and f.duration %}
+            <span class="reason-badge short">⏱️ Video: {{ f.duration|round(1) }}s</span>
+          {% else %}
+            <span class="reason-badge manual">👤 Manual delete</span>
+          {% endif %}
+        </div>
+      </div>
     {% endfor %}
+  </div>
+
+  <div id="compare-modal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>Verify Duplicate Image</h2>
+        <button type="button" class="btn small modal-close">✕</button>
+      </div>
+      <p class="muted">Check both images below to confirm they are visually identical. The system kept the original and queued the duplicate copy to delete.</p>
+      <div class="compare-columns">
+        <div class="compare-box keeper-box">
+          <div class="compare-tag keep-tag">✓ KEPT ORIGINAL</div>
+          <div class="compare-img-wrap">
+            <img id="cmp-keeper-img" src="" alt="Original">
+          </div>
+          <div class="compare-meta">
+            <span id="cmp-keeper-res" class="res-badge"></span>
+            <a id="cmp-keeper-link" href="" target="_blank" rel="noopener" class="btn small">Open Full Image ↗</a>
+          </div>
+        </div>
+        <div class="compare-box dup-box">
+          <div class="compare-tag del-tag">✕ QUEUED TO DELETE</div>
+          <div class="compare-img-wrap">
+            <img id="cmp-dup-img" src="" alt="Duplicate">
+          </div>
+          <div class="compare-meta">
+            <span id="cmp-dup-res" class="res-badge"></span>
+            <span id="cmp-dup-size" class="size-badge"></span>
+            <a id="cmp-dup-link" href="" target="_blank" rel="noopener" class="btn small">Open Full Image ↗</a>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn danger" id="cmp-keep-btn">Keep this copy (Don't delete)</button>
+        <button type="button" class="btn primary modal-close">Looks correct (Keep for deletion)</button>
+      </div>
+    </div>
   </div>
 </main>
 {% endblock %}
@@ -76,7 +139,35 @@ btn.addEventListener("click", async () => {
   }
 });
 
+let currentCmpDupPath = null;
+const modal = document.getElementById("compare-modal");
+const cmpKeeperImg = document.getElementById("cmp-keeper-img");
+const cmpDupImg = document.getElementById("cmp-dup-img");
+const cmpKeeperRes = document.getElementById("cmp-keeper-res");
+const cmpDupRes = document.getElementById("cmp-dup-res");
+const cmpDupSize = document.getElementById("cmp-dup-size");
+const cmpKeeperLink = document.getElementById("cmp-keeper-link");
+const cmpDupLink = document.getElementById("cmp-dup-link");
+const cmpKeepBtn = document.getElementById("cmp-keep-btn");
+
 document.getElementById("main").addEventListener("click", async (e) => {
+  const cmpBtn = e.target.closest(".compare-btn");
+  if (cmpBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const { dup, keeper, dupRes, keeperRes, dupSize } = cmpBtn.dataset;
+    currentCmpDupPath = dup;
+    cmpKeeperImg.src = "/media?p=" + encodeURIComponent(keeper);
+    cmpDupImg.src = "/media?p=" + encodeURIComponent(dup);
+    cmpKeeperRes.textContent = keeperRes ? `Resolution: ${keeperRes}` : "";
+    cmpDupRes.textContent = dupRes ? `Resolution: ${dupRes}` : "";
+    cmpDupSize.textContent = dupSize ? `Size: ${dupSize}` : "";
+    cmpKeeperLink.href = "/media?p=" + encodeURIComponent(keeper);
+    cmpDupLink.href = "/media?p=" + encodeURIComponent(dup);
+    modal.style.display = "flex";
+    return;
+  }
+
   const unmarkBtn = e.target.closest(".unmark-btn");
   if (!unmarkBtn) return;
   e.preventDefault();
@@ -89,13 +180,41 @@ document.getElementById("main").addEventListener("click", async (e) => {
       body: JSON.stringify({ path, rating: null })
     });
     if (res.ok) {
-      const tile = unmarkBtn.closest(".tile");
-      if (tile) tile.remove();
+      const wrap = unmarkBtn.closest(".tile-wrap") || unmarkBtn.closest(".tile");
+      if (wrap) wrap.remove();
     } else {
       unmarkBtn.disabled = false;
     }
   } catch (_) {
     unmarkBtn.disabled = false;
+  }
+});
+
+document.querySelectorAll(".modal-close").forEach((el) => {
+  el.addEventListener("click", () => { modal.style.display = "none"; });
+});
+modal.addEventListener("click", (e) => {
+  if (e.target === modal) modal.style.display = "none";
+});
+
+cmpKeepBtn.addEventListener("click", async () => {
+  if (!currentCmpDupPath) return;
+  cmpKeepBtn.disabled = true;
+  try {
+    const res = await fetch("/api/rate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: currentCmpDupPath, rating: null })
+    });
+    if (res.ok) {
+      const btn = document.querySelector(`.unmark-btn[data-path="${CSS.escape(currentCmpDupPath)}"]`);
+      if (btn) {
+        const wrap = btn.closest(".tile-wrap") || btn.closest(".tile");
+        if (wrap) wrap.remove();
+      }
+      modal.style.display = "none";
+    }
+  } finally {
+    cmpKeepBtn.disabled = false;
   }
 });
 </script>

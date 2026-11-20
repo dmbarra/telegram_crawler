@@ -46,6 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_files_sha ON files(channel_id, sha256);
 CREATE TABLE IF NOT EXISTS ratings (
     path     TEXT PRIMARY KEY,
     rating   TEXT NOT NULL CHECK (rating IN ('good', 'bad', 'delete')),
+    reason   TEXT,
     rated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -120,7 +121,7 @@ CREATE TABLE IF NOT EXISTS settings (
 KEPT = """kept AS (
     SELECT f.path, MIN(f.channel_id) AS channel_id, MAX(f.kind) AS kind, MAX(f.size) AS size,
            MAX(f.caption) AS caption, MIN(COALESCE(f.msg_date, f.downloaded_at)) AS at,
-           MAX(r.rating) AS rating, MAX(m.width) AS width, MAX(m.height) AS height,
+           MAX(r.rating) AS rating, MAX(r.reason) AS reason, MAX(m.width) AS width, MAX(m.height) AS height,
            MAX(m.duration) AS duration, MAX(ml.path IS NOT NULL) AS analyzed,
            MAX(ml.face_count) AS face_count, MAX(ml.error) AS ml_error
     FROM files f LEFT JOIN ratings r ON r.path = f.path LEFT JOIN media_info m ON m.path = f.path
@@ -160,6 +161,10 @@ class Library:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(SCHEMA)
+        try:
+            self._conn.execute("ALTER TABLE ratings ADD COLUMN reason TEXT")
+        except sqlite3.OperationalError:
+            pass
 
     def _all(self, sql, args=()):
         with self._lock:
@@ -305,12 +310,22 @@ class Library:
                 FROM kept k LEFT JOIN channels c ON c.id = k.channel_id
                 WHERE k.rating = 'delete' ORDER BY title, k.at DESC""")
 
-    def mark_to_delete(self, paths) -> None:
+    def mark_to_delete(self, items) -> None:
+        pairs = []
+        for it in items:
+            if isinstance(it, tuple):
+                pairs.append((it[0], it[1]))
+            elif isinstance(it, dict):
+                pairs.append((it["path"], it.get("reason")))
+            else:
+                pairs.append((it, None))
         with self._lock, self._conn:
             self._conn.executemany(
-                """INSERT INTO ratings (path, rating) VALUES (?, 'delete')
-                   ON CONFLICT (path) DO UPDATE SET rating = 'delete', rated_at = datetime('now')""",
-                [(p,) for p in paths],
+                """INSERT INTO ratings (path, rating, reason) VALUES (?, 'delete', ?)
+                   ON CONFLICT (path) DO UPDATE SET rating = 'delete',
+                       reason = COALESCE(excluded.reason, ratings.reason),
+                       rated_at = datetime('now')""",
+                pairs,
             )
 
     def marked_summary(self) -> dict:

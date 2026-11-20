@@ -344,3 +344,33 @@ tr.mg-row.error td { color: #f87171; }
 .check-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;
                 color: #93a1a1; margin-left: 10px; user-select: none; }
 .check-inline input[type="checkbox"] { cursor: pointer; margin: 0; }
+
+/* ── To delete page reason badges & comparison modal ─────── */
+.tile-wrap { display: flex; flex-direction: column; gap: 6px; }
+.tile-reason { display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.reason-badge { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 4px;
+                background: #073642; border: 1px solid #586e75; color: #93a1a1; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+.reason-badge.dup { color: #2aa198; border-color: #2aa198; }
+.reason-badge.short { color: #b58900; border-color: #b58900; }
+.reason-badge.manual { color: #839496; border-color: #586e75; }
+.compare-btn { font-size: 11px; padding: 2px 8px; background: #268bd2; color: #fdf6e3; border: none; border-radius: 4px; cursor: pointer; }
+.compare-btn:hover { background: #2aa198; color: #002b36; font-weight: bold; }
+
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 43, 54, 0.88); backdrop-filter: blur(4px);
+                  z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.modal-card { background: #002b36; border: 1px solid #073642; border-radius: 8px; max-width: 880px; width: 100%;
+              padding: 24px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7); max-height: 90vh; overflow-y: auto; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.modal-header h2 { margin: 0; font-size: 18px; color: #fdf6e3; }
+.modal-close { background: transparent; border: 1px solid #586e75; color: #93a1a1; font-size: 14px; cursor: pointer; border-radius: 4px; padding: 4px 10px; }
+.modal-close:hover { background: #073642; color: #fdf6e3; }
+.compare-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+.compare-box { border: 1px solid #073642; border-radius: 6px; padding: 12px; background: rgba(7, 54, 66, 0.4); display: flex; flex-direction: column; gap: 10px; }
+.compare-tag { font-size: 12px; font-weight: bold; letter-spacing: 0.5px; }
+.compare-tag.keep-tag { color: #859900; }
+.compare-tag.del-tag { color: #dc322f; }
+.compare-img-wrap { height: 280px; display: flex; align-items: center; justify-content: center; background: #001f27; border-radius: 4px; overflow: hidden; border: 1px solid #073642; }
+.compare-img-wrap img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.compare-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: #93a1a1; flex-wrap: wrap; }
+.res-badge, .size-badge { background: #073642; padding: 2px 6px; border-radius: 3px; border: 1px solid #586e75; font-size: 11px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 18px; border-top: 1px solid #073642; padding-top: 16px; }
