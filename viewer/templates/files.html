@@ -13,7 +13,7 @@
       {% endfor %}
     </select>
   </form>
-  <a href="/files/marked" class="btn{% if marked %} danger{% endif %}">To delete ({{ marked }}{% if marked %} · {{ marked_size }}{% endif %})</a>
+  <a href="/files/marked" id="mk-link" class="btn{% if marked %} danger{% endif %}">To delete ({{ marked }}{% if marked %} · {{ marked_size }}{% endif %})</a>
   <div class="stats">{{ free_str }} free of {{ disk_str }}</div>
 </header>
 
@@ -38,9 +38,20 @@
         </label>
       </div>
       <div class="row">
+        <button class="btn" id="ml-all">Run ML on all images</button>
+        <button class="btn" id="ml-stop" disabled>Stop ML</button>
+        <span class="msg">Images and videos of every channel. No scan needed. Uses the Force box above.</span>
+      </div>
+      <div class="row">
         <span class="msg" id="scan-msg">Reads size, length and a picture hash with ffprobe.</span>
       </div>
       <h2>Rules</h2>
+      <div class="row">
+        <span>To delete list: <b id="mk-count">{{ marked }}</b> file(s)</span>
+        <button class="btn" id="mk-clear" {% if not marked %}disabled{% endif %}>Clear list</button>
+        <a href="/files/marked" class="btn">Open To delete</a>
+        <span class="msg" id="mk-msg">Clear takes every file off the list. No file is deleted.</span>
+      </div>
       <div class="row">
         <label>Videos shorter than
           <input type="number" id="short-sec" value="5" min="1" max="3600" step="1" class="num-input"> s</label>
@@ -131,11 +142,14 @@ if (scanBtn) {
   const scanMsg = document.getElementById("scan-msg");
   const scanMl = document.getElementById("scan-ml");
   const scanForce = document.getElementById("scan-force");
+  const mlAll = document.getElementById("ml-all");
+  const mlStop = document.getElementById("ml-stop");
   let wasRunning = false;
   const showScan = async () => {
     try {
       const s = await (await fetch("/api/scan/status")).json();
-      scanBtn.disabled = s.running;
+      scanBtn.disabled = mlAll.disabled = s.running;
+      mlStop.disabled = !s.ml_running;
       if (s.running) {
         wasRunning = true;
         if (s.scanner_running) {
@@ -152,12 +166,14 @@ if (scanBtn) {
       let base = `${s.scanned} of ${s.files} files scanned · ${left} new · ${s.failed} could not be read`;
       if (wasRunning) {
         let doneMsg = `Done! ${base}`;
-        if (s.ml_done) doneMsg += ` · ML processed ${s.ml_done} file(s), found ${s.ml_faces} face(s).`;
-        setMsg(scanMsg, doneMsg, (s.errors || s.ml_errors) ? "error" : "ok");
+        if (s.ml_done) doneMsg += ` · ML processed ${s.ml_done} file(s), found ${s.ml_faces} face(s), ${s.ml_errors} error(s).`;
+        if (s.ml_result === "stopped") doneMsg += " ML was stopped.";
+        if (s.ml_result === "failed") doneMsg += ` ML failed: ${s.ml_message}`;
+        setMsg(scanMsg, doneMsg, (s.errors || s.ml_errors || s.ml_result === "failed") ? "error" : "ok");
       } else {
         setMsg(scanMsg, base);
       }
-      scanBtn.disabled = false;
+      scanBtn.disabled = mlAll.disabled = false;
     } catch (err) {
       setMsg(scanMsg, "Could not read scan status: " + err.message, "error");
     }
@@ -178,7 +194,53 @@ if (scanBtn) {
       scanBtn.disabled = false;
     }
   });
+  mlAll.addEventListener("click", async () => {
+    const force = scanForce.checked;
+    if (force && !confirm("Run ML again on ALL images and videos, including ones already analyzed?")) return;
+    mlAll.disabled = scanBtn.disabled = true;
+    try {
+      const d = await post("/api/ml/start-all", { force });
+      setMsg(scanMsg, `ML started on ${d.total} file(s) from all channels.`, "ok");
+      showScan();
+    } catch (err) {
+      setMsg(scanMsg, "ML not started: " + err.message, "error");
+      mlAll.disabled = scanBtn.disabled = false;
+    }
+  });
+  mlStop.addEventListener("click", async () => {
+    mlStop.disabled = true;
+    try {
+      await post("/api/ml/stop", {});
+      setMsg(scanMsg, "Stopping ML after the current file…");
+    } catch (err) {
+      setMsg(scanMsg, "Could not stop ML: " + err.message, "error");
+      mlStop.disabled = false;
+    }
+  });
   showScan();
+
+  const mkCount = document.getElementById("mk-count");
+  const mkLink = document.getElementById("mk-link");
+  const mkClear = document.getElementById("mk-clear");
+  const mkMsg = document.getElementById("mk-msg");
+  const updateMarked = (n) => {
+    mkCount.textContent = n;
+    mkLink.textContent = `To delete (${n})`;
+    mkLink.classList.toggle("danger", n > 0);
+    mkClear.disabled = n === 0;
+  };
+  mkClear.addEventListener("click", async () => {
+    if (!confirm(`Take all ${mkCount.textContent} file(s) off the To delete list?\n\nNo file is deleted. Marks from rules and from the Viewer are both cleared.`)) return;
+    mkClear.disabled = true;
+    try {
+      const d = await post("/api/files/marked/clear", {});
+      updateMarked(0);
+      setMsg(mkMsg, `Cleared ${d.cleared} file(s) from the list. No file was deleted.`, "ok");
+    } catch (err) {
+      setMsg(mkMsg, "Clear failed: " + err.message, "error");
+      mkClear.disabled = false;
+    }
+  });
 
   const sec = document.getElementById("short-sec");
   const findBtn = document.getElementById("short-find");
@@ -190,6 +252,7 @@ if (scanBtn) {
       const d = await post("/api/rules/short-videos", { seconds: Number(sec.value), apply });
       if (apply) {
         setMsg(shortMsg, `Marked ${d.count} video(s) as To delete. ${d.marked} file(s) are now on the To delete page.`, "ok");
+        updateMarked(d.marked);
       } else {
         setMsg(shortMsg, `${d.count} video(s) under ${sec.value} s, ${d.size}, not marked yet.`, d.count ? "" : "ok");
         applyBtn.disabled = !d.count;
@@ -216,6 +279,7 @@ if (scanBtn) {
       const d = await post("/api/rules/visual-duplicates", { scope: vdupScope.value, apply });
       if (apply) {
         setMsg(vdupMsg, `Marked ${d.count} duplicate image(s) as To delete. ${d.marked} file(s) are now on the To delete page.`, "ok");
+        updateMarked(d.marked);
       } else {
         if (d.count) {
           setMsg(vdupMsg, `Found ${d.count} duplicate copy(ies) in ${d.clusters} group(s), saving ${d.size}. Highest resolution is kept.`, "warn");

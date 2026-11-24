@@ -98,6 +98,18 @@ def scan_start():
     return jsonify(ok=True)
 
 
+@bp.post("/api/ml/start-all")
+def ml_start_all():
+    body = _json_body()
+    tg = current_app.extensions["telegram"]
+    if tg.scanner.running:
+        return jsonify(error="Wait until the media info scan finishes"), 409
+    err = tg.analyzer.start(force=bool(body.get("force")), require_study=False)
+    if err:
+        return jsonify(error=err), 409
+    return jsonify(ok=True, total=tg.analyzer.total)
+
+
 @bp.post("/api/rules/short-videos")
 def short_videos():
     """Find videos shorter than `seconds`; with apply=true, mark them all To delete."""
