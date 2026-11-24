@@ -333,6 +333,9 @@ class Library:
                         "FROM kept WHERE rating = 'delete'")
         return {"count": row["n"], "size": row["size"] or 0}
 
+    def clear_marked(self) -> int:
+        return self._run("DELETE FROM ratings WHERE rating = 'delete'")
+
     # ─── media info ─────────────────────────────────────────────
     def unscanned(self, force: bool = False) -> list:
         where = "k.kind IN ('images', 'videos', 'audio')"

@@ -87,27 +87,13 @@ def scan_start():
     force = bool(body.get("force"))
     run_ml = bool(body.get("run_ml"))
     tg = current_app.extensions["telegram"]
-
-    if tg.scanner.running or tg.analyzer.running:
-        return jsonify(error="A scan or ML analysis is already running"), 409
-
     if run_ml:
-        from src.ml import health, ServiceDown
-        try:
-            health()
-        except ServiceDown as e:
-            return jsonify(error=f"Cannot run ML: {e}"), 409
-
-    def start_ml_after_scan():
-        tg.analyzer.start(channel_id=None, force=force, require_study=False)
-
-    err = tg.scanner.start(force=force, on_done=(start_ml_after_scan if run_ml else None))
+        err = tg.scan_and_analyze(force=force)
+    elif tg.analyzer.running:
+        err = "A scan or ML analysis is already running"
+    else:
+        err = tg.scanner.start(force=force)
     if err:
-        if run_ml and "Nothing to scan" in err:
-            ml_err = tg.analyzer.start(channel_id=None, force=force, require_study=False)
-            if ml_err:
-                return jsonify(error=ml_err), 409
-            return jsonify(ok=True)
         return jsonify(error=err), 409
     return jsonify(ok=True)
 
@@ -196,6 +182,12 @@ def marked_page():
         entries.append(item)
     return render_template("marked.html", entries=entries, count=marked["count"],
                            size_str=fmt_size(marked["size"]))
+
+
+@bp.post("/api/files/marked/clear")
+def clear_marked():
+    _json_body()
+    return jsonify(cleared=_library().clear_marked())
 
 
 @bp.post("/api/files/delete")

@@ -17,7 +17,7 @@ from src.dedup import find_duplicates
 from src.discover import Discovery
 from src.mediainfo import Scanner
 from src.groups import Grouper
-from src.ml import Analyzer
+from src.ml import Analyzer, ServiceDown, health
 from src.progress import Progress
 from src.runner import MEDIA_LABELS, build_filter, fetch_channels, normalize_entity, run_job
 
@@ -245,6 +245,27 @@ class TelegramService:
             self._on_job_done()
         return {"removed": removed, "freed": freed, "failed": failed}, None
 
+    def scan_and_analyze(self, force: bool = False, log=None):
+        """Media info scan, then ML on every channel. Returns an error message, or None if started."""
+        if self.scanner.running or self.analyzer.running:
+            return "A scan or ML analysis is already running"
+        try:
+            health()
+        except ServiceDown as e:
+            return f"Cannot run ML: {e}"
+
+        def start_ml():
+            err = self.analyzer.start(force=force, require_study=False)
+            if log:
+                log(f"Auto ML not started: {err}" if err else
+                    f"Auto ML: analyzing {self.analyzer.total} file(s). Progress is on the Files page.",
+                    "warn" if err else "ok")
+
+        err = self.scanner.start(force=force, on_done=start_ml)
+        if err and "Nothing to scan" in err:
+            err = self.analyzer.start(force=force, require_study=False)
+        return err
+
     def snapshot(self, since: int = 0) -> dict:
         return {
             "telegram": {"status": self.status, "error": self.error, "account": self.account},
@@ -267,3 +288,13 @@ class TelegramService:
             p.finish()
             if self._on_job_done:
                 self._on_job_done()
+            if p.downloaded:
+                threading.Thread(target=self._auto_ml, daemon=True, name="auto-ml").start()
+
+    def _auto_ml(self):
+        p = self.progress
+        err = self.scan_and_analyze(log=p.log)
+        if err:
+            p.log(f"Auto ML not started: {err}", "warn")
+        else:
+            p.log("Auto ML: media scan of new files, then ML on all channels. Progress is on the Files page.", "ok")
