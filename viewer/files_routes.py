@@ -126,7 +126,7 @@ def short_videos():
         items = [
             (r["path"], json.dumps({
                 "type": "short_video",
-                "duration": round(float(r["duration"]), 1) if r.get("duration") is not None else None,
+                "duration": round(float(r["duration"]), 1) if r["duration"] is not None else None,
                 "limit": seconds,
             }))
             for r in rows
@@ -184,8 +184,8 @@ def marked_page():
     for r in lib.marked_files():
         item = file_item(r)
         item["channel_title"] = r["title"]
-        item["duration"] = r.get("duration")
-        raw_reason = r.get("reason")
+        item["duration"] = r["duration"]
+        raw_reason = r["reason"]
         reason_obj = None
         if raw_reason:
             try:
